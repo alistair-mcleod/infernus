@@ -1,5 +1,9 @@
 
+*.txt
+*.xml
+*.xml.gz
 notebooks/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

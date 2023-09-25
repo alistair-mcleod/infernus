@@ -18,7 +18,7 @@ from pycbc.filter import highpass
 import argparse
 
 from GWSamplegen.snr_utils_np import numpy_matched_filter, mf_in_place, np_sigmasq
-
+from GWSamplegen.noise_utils import get_valid_noise_times
 
 noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_first_week_1024"
 duration = 1024
@@ -29,91 +29,7 @@ f_final = 1024
 delta_f = 1/duration
 approximant = "TaylorF2"
 
-def get_valid_noise_times(
-	noise_dir: str,
-	noise_len: int,
-	min_step: int = 1,
-	start_time: int = None,
-	end_time: int = None,
-) -> (List[int], np.ndarray, List[str]):
-	"""multipurpose function to return a list of valid start times, list of noise file paths and deconstructed file names 
-	
-	noise_dir: directory containing noise files
-	noise_len: minimum length of noise segments to consider
-	start_time: if specified, the start of the time window to consider. Otherwise, all noise in noise_dir will be used.
-	end_time: if specified, the end of the time window to consider
 
-	returns:
-
-	valid_times: list of valid start times for noise segments
-	paths: array of deconstructed file names, giving detector info, segment start time and duration
-	file_list: list of noise file paths in chronological order
-	"""
-
-	valid_times = np.array([])
-	
-	#get all strain file paths from the noise directory, then extract their start time and duration
-	paths = os.listdir(noise_dir)
-	paths = [path.split("-") for path in paths if len(path.split("-")) == 3]
-
-	#paths[0] is the interferometer list
-	#paths[1] is the start time
-	#paths[2] is the duration
-
-	ifo_list = paths[0][0]
-	
-	valid_paths = []
-	for path in paths:
-		if int(path[2][:-4]) >= noise_len:
-			if start_time is not None and end_time is not None:
-				if int(path[1]) <= start_time and int(path[1]) + int(path[2][:-4]) - start_time >= noise_len:
-					valid_paths.append(path)
-					print("path valid, starts before", path)
-				
-				elif int(path[1]) >= start_time and int(path[1]) + int(path[2][:-4]) <= end_time:
-					valid_paths.append(path)
-					print("path valid, contained", path)
-
-				
-				elif int(path[1]) < end_time and int(path[1]) + int(path[2][:-4]) - end_time >= noise_len:
-					
-					valid_paths.append(path)
-					print("path valid, ends after", path)
-
-				else:
-					pass
-					#print("path not valid", path)
-			
-			else:
-				valid_paths.append(path)
-
-	paths = valid_paths
-	for path in paths:
-		path[1] = int(path[1])
-		path[2] = int(path[2][:-4])
-
-		#print(path[1], path[2])
-
-		times = np.arange(path[1], path[1]+path[2] - noise_len, min_step)
-		if path[1] + path[2] - noise_len not in times:
-
-			times = np.append(times, path[1] + path[2] - noise_len)
-
-		valid_times = np.concatenate((valid_times,times))
-
-		if start_time is not None and end_time is not None:
-			valid_times = valid_times[(valid_times >= start_time) & (valid_times + noise_len <= end_time) ]
-		
-	#ensure the file paths are in chronological order
-	paths = np.array(paths)
-	paths = paths[np.argsort(paths[:,1])]
-
-	valid_times = np.sort(valid_times)
-
-	#reconstruct the file paths from the start times and ifo_list
-	file_list = [noise_dir +"/"+ ifo_list +"-"+ path[1] +"-"+ path[2] +".npy" for path in paths]
-
-	return valid_times, paths, file_list
 
 WINDOW_SIZE = 2048
 STEP = 128

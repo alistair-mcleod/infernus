@@ -342,11 +342,12 @@ for i in range(n_batches):
 	predsh1 = np.concatenate((preds["H1"]), axis = 1)
 	predsl1 = np.concatenate((preds["L1"]), axis = 1)
 	combopreds = []
-	for j in range(100):
-		predsl1roll = np.roll(predsl1, axis = 1, shift = j * 100)
-		for k in range(len(predsh1)):
-			
-			ifo_dict['combiner'].predict([predsh1[k],predsl1roll[k]], verbose = 0, batch_size = 32000)
+	with tf.device('/GPU:0'):
+		for j in range(100):
+			predsl1roll = np.roll(predsl1, axis = 1, shift = j * 100)
+			for k in range(len(predsh1)):
+				
+				ifo_dict['combiner'].predict([predsh1[k],predsl1roll[k]], verbose = 0, batch_size = 32000)
 	#	np.roll(preds["L1"], k, axis=1)
 	#time.sleep(10)
 	timeslide_time += time.time() - start

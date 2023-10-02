@@ -3,7 +3,8 @@
 *.xml
 *.xml.gz
 notebooks/
-
+*.ipynb
+*.onnx
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

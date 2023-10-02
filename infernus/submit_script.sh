@@ -3,6 +3,7 @@
 #SBATCH --output=gen_inj_file.log
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=2
 #SBATCH --time=01:00:00
 #SBATCH --mem-per-cpu=10gb
 
@@ -15,8 +16,8 @@ python lvc_rates_injections.py \
     --gps-start-time 1238166018 \
     --gps-end-time 1238186018 \
     --max-redshift 0.05 \
-    --time-interval 0 \
-    --time-step 100 \
+    --time-interval 5 \
+    --time-step 200 \
     --mass-distribution UNIFORM_PAIR \
     --min-mass 1 \
     --max-mass 2.6 \

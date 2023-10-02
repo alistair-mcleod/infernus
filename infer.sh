@@ -10,7 +10,7 @@
 
 source /home/amcleod/.bashrc
 
-cd "/fred/oz016/alistair/infernus"
+cd "/fred/oz016/alistair/infernus/infernus"
 
 echo done
 

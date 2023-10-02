@@ -10,6 +10,9 @@ notebooks/
 !./infernus/serving/dummy/*.ipynb
 !./infernus/serving/dummy/model_repository/**.onnx
 
+# Ignore temporary TensorFlow models generated in the model conversion folder
+./infernus/serving/convert_model/*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

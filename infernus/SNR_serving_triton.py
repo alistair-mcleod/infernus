@@ -23,6 +23,14 @@ import gc
 from GWSamplegen.snr_utils_np import numpy_matched_filter, mf_in_place, np_sigmasq
 from GWSamplegen.noise_utils import get_valid_noise_times
 
+
+
+
+
+
+#REGULAR SNR SERIES STUFF
+
+
 noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_first_week_1024"
 duration = 1024
 sample_rate = 2048
@@ -32,8 +40,8 @@ f_final = 1024
 delta_f = 1/duration
 approximant = "TaylorF2"
 
-import multiprocessing as mp
-n_cpus = 2
+#import multiprocessing as mp
+#n_cpus = 2
 
 WINDOW_SIZE = 2048
 STEP = 128
@@ -98,9 +106,6 @@ valid_times, paths, file_list = get_valid_noise_times(noise_dir,duration, 900)
 
 templates, metricParams, aXis= load_pycbc_templates("PyCBC_98_aligned_spin", "/fred/oz016/alistair/GWSamplegen/template_banks/")
 
-
-
-
 N = int(duration/delta_t)
 kmin, kmax = np_get_cutoff_indices(f_lower, None, delta_f, N)
 
@@ -128,15 +133,144 @@ max_waveform_length = max(12, int(np.ceil(max_waveform_length/10)*10))
 parser = argparse.ArgumentParser()
 parser.add_argument('--index', type=int)
 parser.add_argument('--totaljobs', type=int, default=1)
+parser.add_argument('--node', type=str, default="john108")
+parser.add_argument('--port', type=int, default=8001)
 args = parser.parse_args()
 
 n_jobs = args.totaljobs
 job_id = args.index
+gpu_node = args.node
+grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
 
 print("starting job {} of {}".format(job_id, n_jobs))
 
+
+
+
+
+#ADDING TRITON STUFF
+
+
+
+
+
+from functools import partial
+import time
+import os
+from queue import Empty, Queue
+from tqdm import tqdm
+from typing import Optional
+import tritonclient.grpc as grpcclient
+from tritonclient.utils import triton_to_np_dtype
+from tritonclient.grpc._infer_result import InferResult
+from tritonclient.utils import InferenceServerException
+
+#gpu_node = "john108"
+#gpu_node = 
+print("connecting to {} on port {}".format(gpu_node, grpc_port))
+
+#batch size for triton model
+batch_size = 1024
+model = "test-bns-1024"
+
+# Setting up client
+triton_client = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port))
+
+dummy_data = np.random.normal(size=(batch_size, 2048,1)).astype(np.float32)
+inputh = grpcclient.InferInput("h", dummy_data.shape, datatype="FP32")
+inputl = grpcclient.InferInput("l", dummy_data.shape, datatype="FP32")
+output = grpcclient.InferRequestedOutput("concatenate")
+
+
+callback_q = Queue()
+
+def onnx_callback(
+    queue: Queue,
+    result: InferResult,
+    error: Optional[InferenceServerException]
+) -> None:
+    """
+    Callback function to manage the results from 
+    asynchronous inference requests and storing them to a  
+    queue.
+
+    Args:
+        queue: Queue
+            Global variable that points to a Queue where 
+            inference results from Triton are written to.
+        result: InferResult
+            Triton object containing results and metadata 
+            for the inference request.
+        error: Optional[InferenceServerException]
+            For successful inference, error will return 
+            `None`, otherwise it will return an 
+            `InferenceServerException` error.
+    Returns:
+        None
+    Raises:
+        InferenceServerException:
+            If the connected Triton inference request 
+            returns an error, the exception will be raised 
+            in the callback thread.
+    """
+    try:
+        if error is not None:
+            raise error
+
+        request_id = str(result.get_response().id)
+
+        # necessary when needing only one number of 2D output
+        #np_output = {}
+        #for output in result._result.outputs:
+        #    np_output[output.name] = result.as_numpy(output.name)[:,1]
+
+        # only valid when one output layer is used consistently
+        output = list(result._result.outputs)[0].name
+        np_outputs = result.as_numpy(output)
+
+        response = (np_outputs, request_id)
+
+        if response is not None:
+            queue.put(response)
+
+    except Exception as ex:
+        print("Exception in callback")
+        template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+        message = template.format(type(ex).__name__, ex.args)
+        print(message)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #MAKING JOB SMALLER
-templates = templates[:30]
+templates = templates[:n_jobs*30*10]
 
 total_templates = len(templates)
 templates_per_job = int(np.ceil((len(templates)/n_jobs)))
@@ -156,13 +290,13 @@ templates_per_batch = 30
 
 n_batches = int(np.ceil(templates_per_job/templates_per_batch))
 
-print("batches per job (SHOULD BE 1):", n_batches)
+print("batches per job:", n_batches)
 
 n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
-n_noise_segments = 50
-#n_noise_segments = 10
+#n_noise_segments = 50
+n_noise_segments = 10
 
 
 window_size = 2048
@@ -199,7 +333,7 @@ from model_utils import split_models
 ifo_dict = split_models()
 
 #adding tensorflow stuff
-import tensorflow as tf
+#import tensorflow as tf
 
 
 global windowed_SNR
@@ -219,7 +353,7 @@ def strain2SNR(ifo):
 	template_norm = np_sigmasq(t_templates, psds[ifo], N, kmin, kmax, delta_f)
 	y = mf_in_place(strain_np, psds[ifo], N, kmin, kmax, template_conj, template_norm)
 
-	print("y shape:", y.shape)
+	#print("y shape:", y.shape)
 	#mf_time += time.time() - start
 
 	#start = time.time()
@@ -229,7 +363,9 @@ def strain2SNR(ifo):
 	#print("in the function, {} windowed_SNR starts with {}".format(ifo, windowed[0][0][:10]))
 	return windowed
 
-
+#flush prints
+import sys
+sys.stdout.flush()
 
 for i in range(n_batches):
 	print("batch", i)
@@ -298,7 +434,7 @@ for i in range(n_batches):
 			start = time.time()
 			y = mf_in_place(strain_np, psds[ifos[ifo]], N, kmin, kmax, template_conj, template_norm)
 
-			print("y shape:", y.shape)
+			#print("y shape:", y.shape)
 			mf_time += time.time() - start
 
 			start = time.time()
@@ -306,7 +442,7 @@ for i in range(n_batches):
 									window_size, stride))
 			window_time += time.time() - start
 			
-		print("windowed_SNR starts with", windowed_SNR[:, 0, 0, :10])
+		#print("windowed_SNR starts with", windowed_SNR[:, 0, 0, :10])
 
 		if j > 0 and (valid_times[j] - valid_times[j-1]) < slice_duration:
 			print(int((valid_times[j] - valid_times[j-1]) * sample_rate/stride), "windows need to be discarded from start of sample", j)
@@ -315,38 +451,105 @@ for i in range(n_batches):
 		else:
 			chop_index = 0
 
+		if i == 0 and j == 0:
+			while True:
+				try:
+					if triton_client.is_server_ready():
+						print("job {} will sleep for {} seconds".format(job_id, job_id*5))
+						time.sleep(job_id*5)
+						break
+					else:
+						print("waiting for server to be live")
+						time.sleep(1)
+				except Exception as e:
+					
+					print("waiting for server to be live")
+					time.sleep(1)
+
 		start = time.time()
 		#with mp.Pool(n_cpus) as p:
 		#	results = p.map(distribute_preds, [[windowed_SNR[ifos.index(ifo)], ifo] for ifo in ifos] )
 		
-		with tf.device('/GPU:0'):
-			for ifo in ifos:
-				predstemp = ifo_dict[ifo].predict(windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048), batch_size = 4096, verbose = 2)
-				#the 2 needs to be the shape of the output of the 1 detector sub-models
-				preds_reshaped = predstemp.reshape((windowed_SNR.shape[1], windowed_SNR.shape[2] - chop_index, 2))
-				preds[ifo].append(preds_reshaped)
-				#np.save("preds_{}_{}.npy".format(ifo, j), )
-			
-			#print("preds are using {} GB".format((j+1)*preds_reshaped.nbytes*2/1024**3))
+		#print("triton send shape:", windowed_SNR[0]")
+		#print("example windowed SNR:", windowed_SNR[0, 0, 0:batch_size, :])
+		print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
+		total_batches = 0
+
+		for k in range(n_templates):
+			for l in range(0, windowed_SNR.shape[2]-batch_size, batch_size):
+				#print(l)
+				inputh.set_data_from_numpy(np.expand_dims(windowed_SNR[0, k, l:l+batch_size, :], -1))
+				inputl.set_data_from_numpy(np.expand_dims(windowed_SNR[1, k, l:l+batch_size, :], -1))
+				request_id = str(k) + "_" + str(l)
+				#TODO make request ID more informative
+				triton_client.async_infer(model_name=model, inputs=[inputh, inputl], outputs=[output], 
+											  request_id=request_id, callback=partial(onnx_callback,callback_q))
+				#triton_client.async_infer(model_name=model, inputs=[inputh], outputs=[output], 
+				#							  request_id=request_id, callback=partial(onnx_callback,callback_q))
+				#time.sleep(0.0001)
+				total_batches += 1
 
 		del windowed_SNR
 		#del strain
 		#del strain_np
 		gc.collect()
 
+		print("total batches sent:", total_batches)
+		all_responses = []
+		count = 0
+		while True:
+			count += 1
+			if count <= total_batches:
+				#print(count)
+				response = callback_q.get()
+				all_responses.append(response)
+		#         print(response)
+			else:
+				break
+		print(f"infer time: {time.time() - start}")
+
+		del all_responses
+		gc.collect()
+
+		#output_buffer = windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048)
+		#pad end of output_buffer to a multiple of 512
+		#print("output buffer shape:", output_buffer.shape)
+		#bufsize = 512 - output_buffer.shape[0] % 512
+		#print("padding with", bufsize, "zeros")
+
+		#output_buffer = np.pad(output_buffer, ((0, bufsize), (0,0)), 'constant', constant_values = 0)
+
+
+		#with tf.device('/GPU:0'):
+		#	for ifo in ifos:
+		#		predstemp = ifo_dict[ifo].predict(windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048), batch_size = 4096, verbose = 2)
+		#		#the 2 needs to be the shape of the output of the 1 detector sub-models
+		#		preds_reshaped = predstemp.reshape((windowed_SNR.shape[1], windowed_SNR.shape[2] - chop_index, 2))
+		#		preds[ifo].append(preds_reshaped)
+		#		#np.save("preds_{}_{}.npy".format(ifo, j), )
+		#	
+		#	#print("preds are using {} GB".format((j+1)*preds_reshaped.nbytes*2/1024**3))
+
+		#del windowed_SNR
+		#del strain
+		#del strain_np
+		#gc.collect()
+
 		#np.save("preds_L1_{}.npy".format(j), results[1])
 
 		pred_time += time.time() - start
 
+		sys.stdout.flush()
+
 	#timeslide stuff should actually go outside of the j loop i.e. we should run it only after we've collected
 	#the whole week. Should only be ~1.1 GB for 25 templates
-	predsh1 = np.concatenate((preds["H1"]), axis = 1)
-	predsl1 = np.concatenate((preds["L1"]), axis = 1)
+	#predsh1 = np.concatenate((preds["H1"]), axis = 1)
+	#predsl1 = np.concatenate((preds["L1"]), axis = 1)
 
-	print(predsh1.shape)
+	#print(predsh1.shape)
 	start = time.time()
 	
-	combopreds = []
+	#combopreds = []
 	#with tf.device('/GPU:0'):
 	#	for j in range(100):
 	#		predsl1roll = np.roll(predsl1, axis = 1, shift = j * 100)

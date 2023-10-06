@@ -131,20 +131,29 @@ max_waveform_length = max(12, int(np.ceil(max_waveform_length/10)*10))
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--index', type=int)
+parser.add_argument('--jobindex', type=int)
+parser.add_argument('--workerid', type=int, default=0)
+parser.add_argument('--totalworkers', type=int, default=1)
 parser.add_argument('--totaljobs', type=int, default=1)
 parser.add_argument('--node', type=str, default="john108")
 parser.add_argument('--port', type=int, default=8001)
+
 args = parser.parse_args()
 
+print(args)
+job_id = args.jobindex #job id in job array
+worker_id = args.workerid #worker number of a server
+n_workers = args.totalworkers
 n_jobs = args.totaljobs
-job_id = args.index
 gpu_node = args.node
 grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
 
 print("starting job {} of {}".format(job_id, n_jobs))
-
-
+print("I am worker {} of {} for this server".format(worker_id, n_workers))
+job_id = worker_id + job_id*n_workers
+print("my unique index is {}".format(job_id))
+n_jobs = n_jobs * n_workers
+print("there are {} jobs in total".format(n_jobs))
 
 
 
@@ -170,8 +179,8 @@ from tritonclient.utils import InferenceServerException
 print("connecting to {} on port {}".format(gpu_node, grpc_port))
 
 #batch size for triton model
-batch_size = 1024
-model = "test-bns-1024"
+batch_size = 512
+model = "test-bns-512"
 
 # Setting up client
 triton_client = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port))
@@ -259,16 +268,6 @@ def onnx_callback(
 
 
 
-
-
-
-
-
-
-
-
-
-
 #MAKING JOB SMALLER
 templates = templates[:n_jobs*30*10]
 
@@ -323,14 +322,15 @@ window_time = 0
 strain_time = 0
 pred_time = 0
 timeslide_time = 0
+reshape_time = 0
 
 n_templates = templates_per_batch
 t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
 
 
-from model_utils import split_models
+#from model_utils import split_models
 
-ifo_dict = split_models()
+#ifo_dict = split_models()
 
 #adding tensorflow stuff
 #import tensorflow as tf
@@ -447,7 +447,7 @@ for i in range(n_batches):
 		if j > 0 and (valid_times[j] - valid_times[j-1]) < slice_duration:
 			print(int((valid_times[j] - valid_times[j-1]) * sample_rate/stride), "windows need to be discarded from start of sample", j)
 			chop_index = int((valid_times[j] - valid_times[j-1]) * sample_rate/stride)
-			chop_index = 0 #TODO: for now we're just ignoring this. If using ONNX we can't chop anyway because we need to fix the input size
+			#chop_index = 0 #TODO: for now we're just ignoring this. If using ONNX we can't chop anyway because we need to fix the input size
 		else:
 			chop_index = 0
 
@@ -475,11 +475,69 @@ for i in range(n_batches):
 		print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
 		total_batches = 0
 
+		windowed_SNR = windowed_SNR[:, :, chop_index:]
+
+		newshape = windowed_SNR.shape
+
+		#print("pre reshaping:", windowed_SNR[:,0,0,0])
+		#reshape into (2, flattened_windowed_SNR, 2048)
+		windowed_SNR = windowed_SNR.reshape(2, -1, 2048)
+
+		#print("post reshaping:", windowed_SNR[:,0,0])
+		reshape_time += time.time() - start
+		start = time.time()
+
+		bufsize = 0
+		for k in range(int((np.ceil(windowed_SNR.shape[1]/batch_size)))):
+			if k == int((np.ceil(windowed_SNR.shape[1]/batch_size))) - 1:
+				#we may need to pad with zeroes to get to batch_size
+				bufsize = batch_size - windowed_SNR.shape[1] % batch_size
+				print("padding with", bufsize, "windows")
+				hbuf = np.pad(windowed_SNR[0, k*batch_size:], ((0, bufsize), (0,0)), 'constant', constant_values = 0)
+				lbuf = np.pad(windowed_SNR[1, k*batch_size:], ((0, bufsize), (0,0)), 'constant', constant_values = 0)
+			
+			else:
+				hbuf = windowed_SNR[0, k*batch_size: (k+1)*batch_size]
+				lbuf = windowed_SNR[1, k*batch_size: (k+1)*batch_size]
+			
+			inputh.set_data_from_numpy(np.expand_dims(hbuf, -1))
+			inputl.set_data_from_numpy(np.expand_dims(lbuf, -1))
+
+			request_id = str(k) + "_" + str(bufsize)
+
+			triton_client.async_infer(model_name=model, inputs=[inputh, inputl], outputs=[output],
+							 request_id=request_id, callback=partial(onnx_callback,callback_q))
+			
+			total_batches += 1
+			
+				
+			print("taking a small break from sending")
+			print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
+			time.sleep(0.5)
+
+
+		"""
+		bufsize = 0
 		for k in range(n_templates):
-			for l in range(0, windowed_SNR.shape[2]-batch_size, batch_size):
+			for l in range(bufsize, windowed_SNR.shape[2], batch_size):
 				#print(l)
-				inputh.set_data_from_numpy(np.expand_dims(windowed_SNR[0, k, l:l+batch_size, :], -1))
-				inputl.set_data_from_numpy(np.expand_dims(windowed_SNR[1, k, l:l+batch_size, :], -1))
+				if bufsize != 0:
+					print("some of this batch was processed previously. starting from {}".format(bufsize))
+				hbuf = np.expand_dims(windowed_SNR[0, k, chop_index + l: chop_index + l+batch_size, :], -1)
+				lbuf = np.expand_dims(windowed_SNR[1, k, chop_index + l: chop_index + l+batch_size, :], -1)
+				#pad end of output_buffer to a multiple of batch_size if necessary
+				bufsize =  hbuf.shape[0] % batch_size
+				print("bufsize:", bufsize)
+				if bufsize != 0:
+					#instead of padding with zeroes, grab the next template's data and pad to batch_size
+					hbuf = np.concatenate((hbuf, np.expand_dims(windowed_SNR[0, k+1, chop_index: chop_index+bufsize, :], -1)), axis=0)
+					lbuf = np.concatenate((lbuf, np.expand_dims(windowed_SNR[1, k+1, chop_index: chop_index+bufsize, :], -1)), axis=0)
+					print("padding with {} windows from next template".format(bufsize))
+					#hbuf = np.pad(hbuf, ((0, bufsize), (0,0), (0,0)), 'constant', constant_values = 0)
+					#lbuf = np.pad(lbuf, ((0, bufsize), (0,0), (0,0)), 'constant', constant_values = 0)
+					print("hbuf shape:", hbuf.shape)
+				inputh.set_data_from_numpy(hbuf)
+				inputl.set_data_from_numpy(lbuf)
 				request_id = str(k) + "_" + str(l)
 				#TODO make request ID more informative
 				triton_client.async_infer(model_name=model, inputs=[inputh, inputl], outputs=[output], 
@@ -488,7 +546,7 @@ for i in range(n_batches):
 				#							  request_id=request_id, callback=partial(onnx_callback,callback_q))
 				#time.sleep(0.0001)
 				total_batches += 1
-
+		"""
 		del windowed_SNR
 		#del strain
 		#del strain_np
@@ -510,6 +568,8 @@ for i in range(n_batches):
 
 		del all_responses
 		gc.collect()
+		#triton_client.get_inference_statistics().model_stats[0].inference_stats.success.count
+		print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
 
 		#output_buffer = windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048)
 		#pad end of output_buffer to a multiple of 512
@@ -569,8 +629,9 @@ print("matched filtering took", mf_time, "seconds")
 print("windowing took", window_time, "seconds")
 print("prediction took", pred_time, "seconds")
 print("timesliding took", timeslide_time, "seconds")
+print("reshaping took", reshape_time, "seconds")
 
-total_time = template_time + noise_time + mf_time + window_time + pred_time + timeslide_time
+total_time = template_time + noise_time + mf_time + window_time + pred_time + timeslide_time + reshape_time
 
 print("total time:", total_time, "seconds")
 

@@ -1,13 +1,15 @@
 #! /bin/bash
-#SBATCH --job-name=triton_P100
+#SBATCH --job-name=triton_saving
 #SBATCH --output=triton_logs/%x_%a.log
 #SBATCH --nodes=1
-#SBATCH --ntasks=3
+#SBATCH --ntasks=5
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=70gb
-#SBATCH --gres=gpu:2
-#SBATCH --time=6:00:00
+#SBATCH --mem=80gb
+#SBATCH --gres=gpu:1
+#SBATCH --time=12:00:00
+#SBATCH --tmp=50GB
 #SBATCH --array=0-1
+
 
 #get slurm job ID
 jobid=$SLURM_ARRAY_JOB_ID
@@ -21,9 +23,25 @@ node=$SLURM_JOB_NODELIST
 echo $node
 
 #set a port based on the array ID. needs to step by 3 because each triton server needs 3 ports
-port=$((20100 + $SLURM_ARRAY_TASK_ID * 3))
+port=$((20100 + $SLURM_ARRAY_TASK_ID * 6))
+port2=$((port+3))
 
-srun -n1 -c1 --exact --gpus=2 --mem=15gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
+
+CUDA_VISIBLE_DEVS=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader | wc -l)
+
+#count number of allocated GPUs
+if [ $CUDA_VISIBLE_DEVS -gt 1 ]; then
+    echo "multiple GPUs allocated"
+    srun -n1 -c1 --exclusive --gpus=1 --mem=15gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
+    srun -n1 -c1 --exclusive --gpus=1 --mem=15gb --output=triton_logs/server%x_%a_2.log ./infernus/serving/dummy/run_tritonserver2.sh $port2 &
+else
+    echo "single GPU allocated"
+    srun -n1 -c1 --exclusive --gpus=1 --mem=15gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
+fi
+
+
+
+
 #sleep 10
 n_workers=2
 
@@ -31,7 +49,13 @@ n_workers=2
 for i in $(seq 0 $((n_workers-1)))
 do
 	echo starting worker $i
-	srun -n1 -c1 --exact --gpus=0 --mem=27gb --output=triton_logs/worker_%x_%a_$i.log python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT --node=$node --port=$port &
+    #make the corresponding jobfs folder
+    mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
+    echo $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
+	srun -n1 -c1 --exclusive --gpus=0 --mem=27gb --output=triton_logs/worker_%x_%a_$i.log python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS &
+    srun -n1 -c1 --exclusive --gpus=0 --mem=3gb --output=triton_logs/cleanup_%x_%a_$i.log python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT &
+
+    #os.environ["JOBFS"] 
 done
 
 echo started all jobs

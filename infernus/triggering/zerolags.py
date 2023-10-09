@@ -119,12 +119,14 @@ def get_zerolags(
             else:
                 for k in coh_snr_max_args:
                     if primary_maxes[k] >= snr_thresh:
-                        temp_zerolags.append([
+                        temp = [
                             secondary_maxes[k], primary_maxes[k],
                             coh_snrs[k],
                             absolute_secondary_arg_maxes[k], absolute_primary_arg_maxes[k],
                             k
-                        ])
+                        ]
+                        if temp not in temp_zerolags:
+                            temp_zerolags.append(temp)
         
         # Chooses best zerolags by maximum coherent SNR
         try:

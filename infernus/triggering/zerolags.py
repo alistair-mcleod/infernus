@@ -9,6 +9,11 @@ def get_best_zerolags(
 ) -> List[List[float]]:
     zerolags_sorted = sorted(zerolags, key=lambda x: x[2], reverse=True)
     
+    # Pad zerolags if required
+    # Format is (h1_snr, l1_snr, coh_snr, h1_time_idx, l1_time_idx, template_idx)
+    while len(zerolags_sorted) < num_trigs:
+        zerolags_sorted.append([-1,-1,-1,-1,-1,-1])
+    
     return zerolags_sorted[:num_trigs]
 
 
@@ -88,7 +93,7 @@ def get_zerolags(
         for key,val in enumerate(det):
             primary_arg_maxes = np.argmax(temp_data_trimmed, axis=2)[:,val] + overlap//2
             primary_maxes = np.max(temp_data_trimmed, axis=2)[:,val]
-            secondary_maxes, secondary_arg_maxes = get_secondary(temp_data, primary_arg_maxes, offset)
+            secondary_maxes, secondary_arg_maxes = get_secondary(temp_data, primary_arg_maxes, offset, val)
             
             coh_snrs = np.sqrt(np.square(primary_maxes) + np.square(secondary_maxes))
             
@@ -124,7 +129,7 @@ def get_zerolags(
         # Chooses best zerolags by maximum coherent SNR
         try:
             new_zerolag = get_best_zerolags(temp_zerolags, num_trigs)
-            if new_zerolag not in zerolags:  # Prevents duplicate zerolags
+            if new_zerolag not in zerolags or new_zerolag[0][0] == -1:  # Prevents duplicate zerolags
                 zerolags.append(new_zerolag)
         except:
             continue

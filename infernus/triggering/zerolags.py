@@ -17,7 +17,7 @@ def get_buffer(
     buffer_id: int,
     overlap: int,
     buffer_length: int
-) -> np.ndarray, np.ndarray:
+) -> (np.ndarray, np.ndarray):
     # if first sample, prepend zeros to temp_data
     if buffer_id == 0:
         temp_data = np.concatenate(
@@ -47,7 +47,7 @@ def get_secondary(
     primary_arg_maxes: np.ndarray,
     offset: int,
     det_idx: int
-) -> np.ndarray, np.ndarray:
+) -> (np.ndarray, np.ndarray):
     secondary_slices = []
     for j in range(temp_data.shape[0]):
         minimum = primary_arg_maxes[j]-offset if primary_arg_maxes[j]-offset>=0 else 0

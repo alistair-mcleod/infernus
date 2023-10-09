@@ -103,7 +103,7 @@ def get_zerolags(
             # Format is (h1_snr, l1_snr, coh_snr, h1_time_idx, l1_time_idx, template_idx)
             if val == 0:
                 for k in coh_snr_max_args:
-                    if primary_maxes[k] >= snr_thresh or secondary_maxes[k] >= snr_thresh:
+                    if primary_maxes[k] >= snr_thresh:
                         temp_zerolags.append([
                             primary_maxes[k], secondary_maxes[k],
                             coh_snrs[k],
@@ -113,7 +113,7 @@ def get_zerolags(
 #                         break
             else:
                 for k in coh_snr_max_args:
-                    if primary_maxes[k] >= snr_thresh or secondary_maxes[k] >= snr_thresh:
+                    if primary_maxes[k] >= snr_thresh:
                         temp_zerolags.append([
                             secondary_maxes[k], primary_maxes[k],
                             coh_snrs[k],

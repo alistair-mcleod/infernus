@@ -347,6 +347,7 @@ strain_time = 0
 pred_time = 0
 timeslide_time = 0
 reshape_time = 0
+wait_time = 0
 
 n_templates = templates_per_batch
 t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
@@ -438,12 +439,12 @@ for i in range(n_batches):
 		noise_time += time.time() - start
 
 		#template_norm = np_sigmasq(t_templates, psds[ifos[ifo]], N, kmin, kmax, delta_f)
-		start = time.time()
+		#start = time.time()
 		#with mp.Pool(n_cpus) as p:
 		#	windowed_SNR = np.array(p.map(strain2SNR, ifos))
 		#	#p.map(strain2SNR, ifos)
 
-		mf_time += time.time() - start
+		#mf_time += time.time() - start
 
 		
 		for ifo in range(len(ifos)):
@@ -521,6 +522,7 @@ for i in range(n_batches):
 		#worker 1 checks how many batches have been sent. if its less than total_batches_sent - 1.2* tritonbatches, wait.
 
 		#TODO: extrapolate. worker 0 SHOULD wait if it's going too fast because otherwise worker 1 will fall behind.
+		"""
 		if worker_id == 1:
 			if n_gpus == 1:
 				successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
@@ -535,8 +537,32 @@ for i in range(n_batches):
 					successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
 				else:
 					successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
-
+		"""
 		start = time.time()
+
+		if n_gpus == 1:
+			successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
+		else:
+			successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
+		
+		if worker_id == 0:
+			reqbatches = int(total_batches_sent - 2.2 * tritonbatches)
+		if worker_id == 1:
+			reqbatches = int(total_batches_sent - 1.2 * tritonbatches)
+					
+		while successes < reqbatches:
+			print("worker waiting, only {} successes. we need {}".format(successes, reqbatches))
+			sys.stdout.flush()
+			time.sleep(1)
+			if n_gpus == 1:
+				successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
+			else:
+				successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
+
+		wait_time = time.time() - start
+
+
+		predstart = time.time()
 
 		bufsize = 0
 		for k in range(tritonbatches):
@@ -577,6 +603,7 @@ for i in range(n_batches):
 			#print("taking a small break from sending")
 			#print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
 			#time.sleep(0.1)
+		
 		print("sending time:", time.time()- start)
 		start = time.time()
 
@@ -604,6 +631,8 @@ for i in range(n_batches):
 			else:
 				break
 		print(f"infer time: {time.time() - start}")
+
+		pred_time += time.time() - predstart
 
 		
 		start = time.time()
@@ -672,7 +701,6 @@ for i in range(n_batches):
 
 		#np.save("preds_L1_{}.npy".format(j), results[1])
 
-		pred_time += time.time() - start
 
 		sys.stdout.flush()
 
@@ -700,13 +728,15 @@ for i in range(n_batches):
 
 print("template loading took", template_time, "seconds")
 print("noise loading took", noise_time, "seconds")
+print("strain generation took", strain_time, "seconds")
 print("matched filtering took", mf_time, "seconds")
 print("windowing took", window_time, "seconds")
 print("prediction took", pred_time, "seconds")
 print("timesliding took", timeslide_time, "seconds")
 print("reshaping took", reshape_time, "seconds")
+print("waiting took", wait_time, "seconds")
 
-total_time = template_time + noise_time + mf_time + window_time + pred_time + timeslide_time + reshape_time
+total_time = template_time + noise_time + mf_time + window_time + strain_time + pred_time + timeslide_time + reshape_time + wait_time
 
 print("total time:", total_time, "seconds")
 

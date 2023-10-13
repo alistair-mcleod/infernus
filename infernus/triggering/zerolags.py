@@ -83,6 +83,8 @@ def get_zerolags(
 ) -> List[List[float]]:
     zerolags = []
     
+    #Refactoring data to be in the form (n_templates, n_detectors, duration) rather than (n_detectors, n_templates, duration)
+    data = np.swapaxes(data, 0, 1)
     # Loop across time series in buffers
     for i in np.arange(0, data.shape[2] - buffer_length + 1, step=buffer_length):
         temp_zerolags = []

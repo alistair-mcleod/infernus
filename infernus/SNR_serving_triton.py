@@ -286,12 +286,6 @@ def onnx_callback(
 
 
 
-
-
-
-
-
-
 #MAKING JOB SMALLER
 templates = templates[:n_jobs*30*10]
 
@@ -336,6 +330,21 @@ n_windows = (slice_duration*sample_rate - window_size)//stride +1
 
 print("n_windows:", n_windows)
 
+
+#TODO: we should save a .json file with all the configs that the cleanup job needs
+#this includes template IDs, inference rate (i.e. 16 Hz), and the number of noise segments
+
+json_dict = {
+	"template_start": template_start,
+	"inference_rate": sample_rate//stride,
+	"n_noise_segments": n_noise_segments,
+	"n_batches": n_batches,
+}
+
+import json
+with open(os.path.join(myfolder, "args.json"), "w") as f:
+	json.dump(json_dict, f)
+	
 
 print("initialisation took", time.time() - start, "seconds")
 
@@ -559,7 +568,7 @@ for i in range(n_batches):
 			else:
 				successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
 
-		wait_time = time.time() - start
+		wait_time += time.time() - start
 
 
 		predstart = time.time()
@@ -614,8 +623,8 @@ for i in range(n_batches):
 
 		print("total batches sent:", total_batches)
 		all_responses = []
-		responses_h  = []
-		responses_l  = []
+		#responses_h  = []
+		#responses_l  = []
 
 		count = 0
 		while True:
@@ -634,24 +643,39 @@ for i in range(n_batches):
 
 		pred_time += time.time() - predstart
 
-		
+		det_output_shape = all_responses[0][0].shape[-1]
+		print("det output shape:", det_output_shape)
+
 		start = time.time()
 		#newshape
 		#should have shape (n_templates, n_windows, 4). TODO: handle arbitrary prediction length, not just 2 per det
 		predbuf = np.empty((newshape[1], 4), dtype=np.float32)
 		for r in range(len(all_responses)):
+			#TODO: handle both the single model and double model cases. currently only works for single model
 			response_header = all_responses[r][1].split("_")
 			idx = int(response_header[0])
 			bufsize = int(response_header[1])
-			if bufsize == 0:
-				#print(idx*batch_size, (idx+1)*batch_size)
-				#print(all_responses[r][0])
-				#print(all_responses[r][0].shape)
-				#print("predbuf shape:", predbuf[idx*batch_size : (idx+1)*batch_size])
-				sys.stdout.flush()
-				predbuf[idx*batch_size : (idx+1)*batch_size] = all_responses[r][0]
-			else:
-				predbuf[idx*batch_size :] = all_responses[r][0][:batch_size-bufsize]
+			if n_gpus == 1:
+				if bufsize == 0:
+					predbuf[idx*batch_size : (idx+1)*batch_size] = all_responses[r][0]
+				else:
+					predbuf[idx*batch_size :] = all_responses[r][0][:batch_size-bufsize]
+
+			elif n_gpus == 2:
+				ifo = response_header[2]
+				if bufsize == 0:
+					if ifo == "h":
+						predbuf[idx*batch_size : (idx+1)*batch_size, :2] = all_responses[r][0]
+					else:
+						predbuf[idx*batch_size : (idx+1)*batch_size, 2:] = all_responses[r][0]
+				else:
+					if ifo == "h":
+						predbuf[idx*batch_size : (idx+1)*batch_size, :2] = all_responses[r][0][:batch_size-bufsize]
+					else:
+						predbuf[idx*batch_size : (idx+1)*batch_size, 2:] = all_responses[r][0][:batch_size-bufsize]
+
+					
+
 		
 		predbuf = predbuf.reshape(n_templates, -1, 4)
 		print("predbuf shape",predbuf.shape)
@@ -668,63 +692,13 @@ for i in range(n_batches):
 		
 
 		del all_responses
-		del responses_h
-		del responses_l
+		#del responses_h
+		#del responses_l
 
 		gc.collect()
-		#triton_client.get_inference_statistics().model_stats[0].inference_stats.success.count
-		#print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
-
-		#output_buffer = windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048)
-		#pad end of output_buffer to a multiple of 512
-		#print("output buffer shape:", output_buffer.shape)
-		#bufsize = 512 - output_buffer.shape[0] % 512
-		#print("padding with", bufsize, "zeros")
-
-		#output_buffer = np.pad(output_buffer, ((0, bufsize), (0,0)), 'constant', constant_values = 0)
-
-
-		#with tf.device('/GPU:0'):
-		#	for ifo in ifos:
-		#		predstemp = ifo_dict[ifo].predict(windowed_SNR[ifos.index(ifo), :, chop_index: ].reshape(-1,2048), batch_size = 4096, verbose = 2)
-		#		#the 2 needs to be the shape of the output of the 1 detector sub-models
-		#		preds_reshaped = predstemp.reshape((windowed_SNR.shape[1], windowed_SNR.shape[2] - chop_index, 2))
-		#		preds[ifo].append(preds_reshaped)
-		#		#np.save("preds_{}_{}.npy".format(ifo, j), )
-		#	
-		#	#print("preds are using {} GB".format((j+1)*preds_reshaped.nbytes*2/1024**3))
-
-		#del windowed_SNR
-		#del strain
-		#del strain_np
-		#gc.collect()
-
-		#np.save("preds_L1_{}.npy".format(j), results[1])
-
 
 		sys.stdout.flush()
 
-	#timeslide stuff should actually go outside of the j loop i.e. we should run it only after we've collected
-	#the whole week. Should only be ~1.1 GB for 25 templates
-	#predsh1 = np.concatenate((preds["H1"]), axis = 1)
-	#predsl1 = np.concatenate((preds["L1"]), axis = 1)
-
-	#print(predsh1.shape)
-	#start = time.time()
-	
-	#combopreds = []
-	#with tf.device('/GPU:0'):
-	#	for j in range(100):
-	#		predsl1roll = np.roll(predsl1, axis = 1, shift = j * 100)
-	#		for k in range(len(predsh1)):
-	#			combopreds.append(ifo_dict['combiner'].predict([predsh1[k],predsl1roll[k]], verbose = 0, batch_size = 32000))
-	#	np.roll(preds["L1"], k, axis=1)
-	#time.sleep(10)
-	#timeslide_time += time.time() - start
-
-
-	print("pretending to send to triton")
-	#time.sleep(1)
 
 print("template loading took", template_time, "seconds")
 print("noise loading took", noise_time, "seconds")

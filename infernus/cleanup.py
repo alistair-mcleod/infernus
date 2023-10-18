@@ -4,6 +4,7 @@ import argparse
 import time
 from triggering.zerolags import get_zerolags
 import sys
+import gc
 
 #TODO: change to a better way of splitting models
 from model_utils import split_models
@@ -120,6 +121,8 @@ while True:
 	
 	os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
 	os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))
+	del SNR, preds, H_preds, L_preds, L_roll, save_arr
+	gc.collect()
 	
 	template_start += n_templates
 

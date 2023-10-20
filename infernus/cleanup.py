@@ -82,7 +82,7 @@ if __name__ == "__main__":
     time_shift_var = 256
     light_travel_time = 20  # In units of datapoints, not ms
     sample_rate = 2048
-    duration = 800
+    duration = 900
     
     
 
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     segment = 0  # noise segment count
     
     windowed_sample_end_indexes = list(range(sample_rate-1, sample_rate*duration, sample_rate//args["inference_rate"]))
-    windowed_sample_start_indexes = list(np.copy(list_of_windowed_sample_end_indexes) - (sample_rate - 1))
+    windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
     start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
 
     while True:
@@ -159,10 +159,14 @@ if __name__ == "__main__":
         
         stats = []
         
+        pstart = time.time()
+
         for key_i, i in enumerate(zerolags):
             # Check this zerolag is valid
             if i[0][0] == -1:
                 continue
+
+            print(f"Processing zerolag {key_i} of {len(zerolags)}")
             
             temp_stats = []
             
@@ -180,13 +184,13 @@ if __name__ == "__main__":
                 continue
                 
             # Load predictions of primary detector
-            primary_preds = preds[primary_det, int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
+            primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
             
             # Get central positions for secondary samples
             secondary_centrals = []
             temp = i[0][3+secondary_det]
             while len(secondary_centrals) < num_time_slides:  # Forward pass
-                temp = temp + shift + np.random.randint(-shift_random, shift_random+1)
+                temp = temp + time_shift + np.random.randint(-time_shift_var, time_shift_var+1)
                 if temp < start_end_indexes[-1][0]:
                     secondary_centrals.append(int(temp))
                 else:
@@ -194,47 +198,62 @@ if __name__ == "__main__":
                     break
             temp = i[0][3+secondary_det]
             while len(secondary_centrals) < num_time_slides:  # Backwards pass
-                temp = temp - shift + np.random.randint(-shift_random, shift_random+1)
+                temp = temp - time_shift + np.random.randint(-time_shift_var, time_shift_var+1)
                 if temp > start_end_indexes[0][1]:
                     secondary_centrals.append(int(temp))
                 else:
                     print("Not enough forward and backward passes to get the desired number of time shifts.")
-                    print("Please adjust the number of time shifts, and/or the shift length.")
+                    print("Please adjust the number of time shifts, and/or the time_shift length.")
                     print(f"This error is for zerolag {key_i}")
                     break
             
             # Get max SNR in light travel time around secondary central positions
             # Append necessary stats to stats output list
+            
+            pred_array = []
+        
             for j in sorted(secondary_centrals):
-                peak = np.max(SNR[int(i[0][5]), secondary_det, j-offset:j+offset+1])
-                peak_pos = j - offset + np.argmax(SNR[int(i[0][5]), secondary_det, j-offset:j+offset+1])
+                
+                peak_pos = j - light_travel_time + np.argmax(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
 
                 secondary_det_samples = get_windows(start_end_indexes, peak_pos)
 
                 # Load predictions of secondary detector
-                secondary_preds = preds[secondary_det, int(i[0][5]), secondary_det_samples[0]:secondary_det_samples[-1]+1]
+                secondary_preds = preds[secondary_det][int(i[0][5]), secondary_det_samples[0]:secondary_det_samples[-1]+1]
 
                 # PASS BOTH DETECTOR PREDICTIONS THROUGH COMBINING MODEL
                 # For this dummy test, we just calculate the mean instead of passing it through a combining model
 #                 combined_preds = np.mean([primary_preds, secondary_preds], axis=0)
+
+                
                 if primary_det == 0:
-                    combined_preds = ifo_dict['combiner'].predict([primary_preds, secondary_preds], verbose = 2)
+                    pred_array.append([primary_preds, secondary_preds])
+                    #combined_preds = ifo_dict['combiner'].predict([primary_preds, secondary_preds], verbose = 2)
                 else:
-                    combined_preds = ifo_dict['combiner'].predict([secondary_preds, primary_preds], verbose = 2)
-        #         print(combined_preds)
-        #         print(combined_preds[::2])
-        #         print(combined_preds[::4])
-        #         print(combined_preds[::8])
+                    pred_array.append([secondary_preds, primary_preds])
+                    #combined_preds = ifo_dict['combiner'].predict([secondary_preds, primary_preds], verbose = 2)
 
-
+            #doing all the timeslides for a zerolag at once
+            pred_array = np.array(pred_array)#.reshape(-1,2,ifo_pred_len)
+            h_pred_array = pred_array[:,0].reshape(-1,ifo_pred_len)
+            l_pred_array = pred_array[:,1].reshape(-1,ifo_pred_len)
+            print("pred array shape", pred_array.shape)
+            combined_preds = ifo_dict['combiner'].predict([h_pred_array, l_pred_array], 
+                                                          verbose = 2, batch_size = 4096)
+            print("combined preds shape", combined_preds.shape)
+            combined_preds = combined_preds.reshape(num_time_slides, -1)
+            #replace with enumerate
+            
+            for idx_j, j in enumerate(sorted(secondary_centrals)):
+                peak = np.max(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
                 # COMPUTE MOVING AVERAGE PREDICTIONS
                 ma_prediction_16hz = []
-                start = inference_rate
-                while start <= len(combined_preds):
-                    ma_prediction_16hz.append(np.mean(combined_preds[:start]))
+                start = args["inference_rate"]
+                while start <= len(combined_preds[idx_j]):
+                    ma_prediction_16hz.append(np.mean(combined_preds[idx_j][:start]))
                     start += 1
                 ma_prediction_16hz = max(ma_prediction_16hz)
-                print(f"MA pred: {ma_prediction_16hz}")
+                #print(f"MA pred: {ma_prediction_16hz}")
 
                 # Format is (H1 SNR, L1 SNR, Network SNR, Moving Average Prediction)
                 # Need individual detector SNRs so they can be combined and filtered properly with new batches of templates on the same noise data
@@ -246,31 +265,9 @@ if __name__ == "__main__":
             stats.append(temp_stats)
         
 
-#         save_arr = np.zeros((2, n_windows))
-
-#         start = time.time()
-#         L_roll = L_preds.copy()
-#         #roll and concatenate L_preds 10 times
-#         for i in range(1,100):
-#             L_roll = np.concatenate((L_roll, np.roll(L_preds, i * n_windows//100, axis=1)), axis=0)
-
-#         H_preds = np.tile(H_preds, (100,1,1))
-
-#         print("finished rolling, took {} seconds".format(time.time() - start))
-
-#         start = time.time()
-
-#         n_templates = SNR.shape[1]
-#         for j in range(n_templates):
-#             #L_roll = np.roll(L_preds, i * n_windows//10, axis=1)
-#             combopreds = ifo_dict['combiner'].predict([H_preds[j], L_roll[j]], batch_size = 4096, verbose = 2)
-#             #for each window, only save the maximum prediction between templates
-#             save_arr[0] = np.maximum(save_arr[0], combopreds[0])
-#             #if we overwrite the maximum, we need to change the template index
-#             save_arr[1] = np.where(save_arr[0] == combopreds[0], j, save_arr[1])
 
 
-        print("finished timeslides, took {} seconds".format(time.time() - start))
+        print("finished timeslides, took {} seconds".format(time.time() - pstart))
 
         #combopreds = np.array(combopreds)
 #         np.save("/fred/oz016/alistair/infernus/timeslides/combopreds_templates_{}-{}_batch_{}_segment_{}.npy".\

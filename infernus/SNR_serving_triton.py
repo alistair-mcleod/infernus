@@ -312,8 +312,8 @@ print("batches per job:", n_batches)
 n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
-#n_noise_segments = 50
-n_noise_segments = 10
+n_noise_segments = 50
+#n_noise_segments = 10
 
 
 window_size = 2048
@@ -439,6 +439,7 @@ for i in range(n_batches):
 	preds = {"H1": [], "L1": []}
 
 	for j in range(n_noise_segments):
+		n_windows = (slice_duration*sample_rate - window_size)//stride +1
 		nonwindowed_SNR = np.empty((len(ifos), n_templates, slice_duration*sample_rate), dtype=np.float32)
 		windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
 
@@ -474,18 +475,36 @@ for i in range(n_batches):
 			#print("y shape:", y.shape)
 			mf_time += time.time() - start
 
-			start = time.time()
-			windowed_SNR[ifo] = np.array(make_windows_2d(nonwindowed_SNR[ifo, :, :], window_size, stride))
-			window_time += time.time() - start
+
 			
+
 		#print("windowed_SNR starts with", windowed_SNR[:, 0, 0, :10])
 
 		if j > 0 and (valid_times[j] - valid_times[j-1]) < slice_duration:
-			print(int((valid_times[j] - valid_times[j-1]) * sample_rate/stride), "windows need to be discarded from start of sample", j)
-			chop_index = int((valid_times[j] - valid_times[j-1]) * sample_rate/stride)
-			#chop_index = 0 #TODO: for now we're just ignoring this. If using ONNX we can't chop anyway because we need to fix the input size
+			chop_time = int((valid_times[j] - valid_times[j-1]) * sample_rate)
+			print("chopping", chop_time/sample_rate, "seconds")
+
+			chop_index = int(((valid_times[j] - valid_times[j-1]) * sample_rate/stride))
+			print("only windows {} onwards of sample {} are needed".format(chop_index, j))
+
+			nonwindowed_SNR = nonwindowed_SNR[:, :, chop_time:]
+			n_windows = (nonwindowed_SNR.shape[-1] - window_size)//stride +1
+			print("n_windows:", n_windows)
+			windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
+			start = time.time()
+		
+			for ifo in range(len(ifos)):
+				windowed_SNR[ifo] = np.array(make_windows_2d(nonwindowed_SNR[ifo, :, :], window_size, stride))
+			window_time += time.time() - start
+				
 		else:
 			chop_index = 0
+			chop_time = 0
+
+			start = time.time()
+			for ifo in range(len(ifos)):
+				windowed_SNR[ifo] = np.array(make_windows_2d(nonwindowed_SNR[ifo, :, :], window_size, stride))
+			window_time += time.time() - start
 
 		if i == 0 and j == 0:
 			while True:
@@ -513,7 +532,7 @@ for i in range(n_batches):
 		print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
 		total_batches = 0
 
-		windowed_SNR = windowed_SNR[:, :, chop_index:]
+		#windowed_SNR = windowed_SNR[:, :, chop_index:]
 
 		
 
@@ -528,25 +547,9 @@ for i in range(n_batches):
 		tritonbatches = int(np.ceil(windowed_SNR.shape[1]/batch_size))
 		total_batches_sent += 2* tritonbatches #to account for 2 workers
 
-		#worker 1 checks how many batches have been sent. if its less than total_batches_sent - 1.2* tritonbatches, wait.
 
-		#TODO: extrapolate. worker 0 SHOULD wait if it's going too fast because otherwise worker 1 will fall behind.
-		"""
-		if worker_id == 1:
-			if n_gpus == 1:
-				successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
-			else:
-				successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
+		#workers wait before sending their first batch so that the server processes them in the correct order
 
-			while successes < int(total_batches_sent - 1.2 * tritonbatches):
-				print("worker 1 waiting, only {} successes. we need {}".format(successes, total_batches_sent - 1.2 * tritonbatches))
-				sys.stdout.flush()
-				time.sleep(1)
-				if n_gpus == 1:
-					successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
-				else:
-					successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
-		"""
 		start = time.time()
 
 		if n_gpus == 1:
@@ -555,9 +558,9 @@ for i in range(n_batches):
 			successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
 		
 		if worker_id == 0:
-			reqbatches = int(total_batches_sent - 2.2 * tritonbatches)
+			reqbatches = int(total_batches_sent - 2.3 * tritonbatches)
 		if worker_id == 1:
-			reqbatches = int(total_batches_sent - 1.2 * tritonbatches)
+			reqbatches = int(total_batches_sent - 1.3 * tritonbatches)
 					
 		while successes < reqbatches:
 			print("worker waiting, only {} successes. we need {}".format(successes, reqbatches))
@@ -613,7 +616,7 @@ for i in range(n_batches):
 			#print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
 			#time.sleep(0.1)
 		
-		print("sending time:", time.time()- start)
+		print("sending time:", time.time()- predstart)
 		start = time.time()
 
 		del windowed_SNR
@@ -644,14 +647,13 @@ for i in range(n_batches):
 		pred_time += time.time() - predstart
 
 		det_output_shape = all_responses[0][0].shape[-1]
-		print("det output shape:", det_output_shape)
+		#print("det output shape:", det_output_shape)
 
 		start = time.time()
 		#newshape
 		#should have shape (n_templates, n_windows, 4). TODO: handle arbitrary prediction length, not just 2 per det
 		predbuf = np.empty((newshape[1], 4), dtype=np.float32)
 		for r in range(len(all_responses)):
-			#TODO: handle both the single model and double model cases. currently only works for single model
 			response_header = all_responses[r][1].split("_")
 			idx = int(response_header[0])
 			bufsize = int(response_header[1])
@@ -685,6 +687,9 @@ for i in range(n_batches):
 		#save to my folder
 		np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
 		np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
+
+		#np.save(os.path.join("/fred/oz016/alistair/infernus/timeslides/", "SNR_batch_{}_segment_{}_worker{}.npy".format(i, j,job_id)), nonwindowed_SNR)
+		#np.save(os.path.join("/fred/oz016/alistair/infernus/timeslides/", "preds_batch_{}_segment_{}_worker{}.npy".format(i, j,job_id)), predbuf)
 		
 		
 		timeslide_time += time.time() - start

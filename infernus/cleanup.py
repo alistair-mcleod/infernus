@@ -51,12 +51,17 @@ from model_utils import split_models
 
 def get_windows(start_end_indexes, peak_pos, pad=True):
     windows = []
-    print(peak_pos//128)
-    print(start_end_indexes[max(peak_pos//128-100,0)])
-    print(start_end_indexes[min(peak_pos//128+100, len(start_end_indexes)-1)])
-    for key,val in enumerate(start_end_indexes[max(peak_pos//128-100,0):min(peak_pos//128+100, len(start_end_indexes)-1)]):
+    #print(peak_pos)
+    #print(start_end_indexes[max(peak_pos//128-100,0)])
+    #print(start_end_indexes[min(peak_pos//128+100, len(start_end_indexes))])
+    for key,val in enumerate(start_end_indexes[max(peak_pos//128-100,0):min(peak_pos//128+100, len(start_end_indexes))]):
         if val[0] <= peak_pos <= val[1]:
-            windows.append(key)
+            windows.append(key+max(peak_pos//128-100,0))
+
+    #TODO: check if this is correct behaviour
+    if len(windows) == 0:
+        print("this zerolag is invalid due to insufficient windows")
+        return windows
     if pad:
         windows.append(windows[-1] + 1)
         windows.insert(0, windows[0] - 1)
@@ -83,9 +88,9 @@ if __name__ == "__main__":
     num_time_slides = 100
     time_shift = 2048
     time_shift_var = 256
-    light_travel_time = 20  # In units of datapoints, not ms
     sample_rate = 2048
     duration = 900
+    light_travel_time = sample_rate//100  #max light travel time between H and L. In units of datapoints, not ms
     
     
 
@@ -112,10 +117,11 @@ if __name__ == "__main__":
     template_start = args["template_start"]
     batch = 0  # template batch count
     segment = 0  # noise segment count
-    
-    windowed_sample_end_indexes = list(range(sample_rate-1, sample_rate*duration, sample_rate//args["inference_rate"]))
-    windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
-    start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
+
+    #max windowed_start_end_indexes =  1843200
+    #windowed_sample_end_indexes = list(range(sample_rate-1, sample_rate*duration, sample_rate//args["inference_rate"]))
+    #windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
+    #start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
 
     while True:
         files = os.listdir(myfolder)
@@ -143,6 +149,23 @@ if __name__ == "__main__":
             overlap = int(0.2*2048),
             num_trigs = 1
         )
+
+        if len(zerolags) < num_time_slides - 1: #TODO: check if we need the -1
+            print("Not enough zerolags for this batch. Skipping.")
+            os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
+            os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))
+
+            if batch == args['n_batches'] - 1 and segment == args['n_noise_segments'] - 1:
+                print("main job should have finished")
+                break
+            elif segment == args['n_noise_segments'] - 1:
+                template_start += n_templates
+                batch += 1
+                segment = 0
+                print("batch is now", batch)
+            else:
+                segment += 1
+                print("segment is now", segment)
 
         # REMOVE ZEROLAGS THAT CORRESPOND TO TIMES THAT REAL EVENTS OCCUR
         # do this by replacing those zerolags with [-1,-1,-1,-1,-1,-1]
@@ -177,11 +200,20 @@ if __name__ == "__main__":
         spreds = 0
         appends = 0
 
+        #save the zerolags to disk
+        print("saving to zerolag file: /fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment))
+        np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment), zerolags)
+
         print("there are {} zerolags".format(len(zerolags)))
+        windowed_sample_end_indexes = list(range(sample_rate-1, SNR.shape[-1], sample_rate//args["inference_rate"]))
+        windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
+        start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
         for key_i, i in enumerate(zerolags):
             # Check this zerolag is valid
             if i[0][0] == -1:
-                print(f"Zerolag {key_i} is invalid")
+                #print(f"Zerolag {key_i} is invalid")
                 continue
 
             #print(f"Processing zerolag {key_i} of {len(zerolags)}")
@@ -189,18 +221,16 @@ if __name__ == "__main__":
             
             # Determine primary and secondary detectors
             primary_det = np.argmax(i[0][:2])
-            primary_dets.append(primary_det)
-
             secondary_det = 1 if primary_det==0 else 0
-            secondary_dets.append(secondary_det)
             
             s = time.time()
             primary_det_pos = i[0][3+primary_det]
+
             
             primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
             window_time += time.time() - s
-            
-            if len(primary_det_samples) < args["inference_rate"] or primary_det_samples[0] < 0 or primary_det_samples[-1] >= len(start_end_indexes):
+            #add +2 to args[inference rate]
+            if len(primary_det_samples) < args["inference_rate"]+2 or primary_det_samples[0] < 0 or primary_det_samples[-1] >= len(start_end_indexes):
                 print(f"Not enough space either side to get full moving average predictions for primary detector in zerolag {key_i}:")
                 print(i)
                 zerolags[key_i][0][0] = -1
@@ -209,13 +239,18 @@ if __name__ == "__main__":
             s = time.time()
             # Load predictions of primary detector
             primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
-            
+            if len(primary_preds) != args["inference_rate"]+2:
+                print("primary preds has wrong length")
+                print(primary_preds)
+
             # Get central positions for secondary samples
             secondary_centrals = []
             temp = i[0][3+secondary_det]
             while len(secondary_centrals) < num_time_slides:  # Forward pass
-                temp = temp + time_shift + np.random.randint(-time_shift_var, time_shift_var+1)
-                if temp < start_end_indexes[-1][0]:
+                #TODO: investigate if this random shift can make the time shift go out of bounds. 
+                #I have had different results when running this on the same data multiple times
+                temp = temp + time_shift + np.random.randint(-time_shift_var, time_shift_var+1) 
+                if temp + light_travel_time < start_end_indexes[-1][0]:
                     secondary_centrals.append(int(temp))
                 else:
                     #print("Stepping in reverse now")
@@ -223,7 +258,7 @@ if __name__ == "__main__":
             temp = i[0][3+secondary_det]
             while len(secondary_centrals) < num_time_slides:  # Backwards pass
                 temp = temp - time_shift + np.random.randint(-time_shift_var, time_shift_var+1)
-                if temp > start_end_indexes[0][1]:
+                if temp - light_travel_time > start_end_indexes[0][1]:
                     secondary_centrals.append(int(temp))
                 else:
                     print("Not enough forward and backward passes to get the desired number of time shifts.")
@@ -244,10 +279,22 @@ if __name__ == "__main__":
                 peak_pos = j - light_travel_time + np.argmax(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
 
                 secondary_det_samples = get_windows(start_end_indexes, peak_pos)
+                if len(secondary_det_samples) == 0:
+                    print("Red alert! a secondary detector has no windows. Hopefully setting the zerolag to -1 fixes it.")
+                    zerolags[key_i][0][0] = -1
+                    continue
+
                 argwindows += time.time() - t
                 # Load predictions of secondary detector
                 t = time.time()
                 secondary_preds = preds[secondary_det][int(i[0][5]), secondary_det_samples[0]:secondary_det_samples[-1]+1]
+                if len(secondary_preds) < 18:
+                    print("secondary preds has wrong length")
+                    print("s. pred array: ",secondary_preds)
+                    print("peak_pos: ", peak_pos)
+                    print(secondary_det_samples)
+                    print('zerolag', key_i)
+
                 spreds += time.time() - t
                 # PASS BOTH DETECTOR PREDICTIONS THROUGH COMBINING MODEL
                 # For this dummy test, we just calculate the mean instead of passing it through a combining model
@@ -266,6 +313,10 @@ if __name__ == "__main__":
             zl_lens.append(zl_len)
             secondary += time.time() - s
 
+            #once we get to here, we know the zerolag is valid, so we can append the primary and secondary detectors
+            primary_dets.append(primary_det)
+            secondary_dets.append(secondary_det)
+
         print("pre predictions took {} seconds".format(time.time() - prestart))
         print("window time", window_time)
         print("central time", centrals)
@@ -274,6 +325,14 @@ if __name__ == "__main__":
         print("spreds time", spreds)
         print("appends time", appends)
         print("secondary minus timed stuff:" , secondary - argwindows - spreds - appends)
+
+        for p in range(len(pred_array)):
+            if len(pred_array[p][0]) != 18:
+                print("H pred array has wrong length, for zerolag {}".format(p))
+                print(pred_array[p])
+            if len(pred_array[p][1]) != 18:
+                print("L pred array has wrong length, for zerolag {}".format(p))
+                print(pred_array[p])
 
         #doing all the timeslides for a zerolag at once
         pred_array = np.array(pred_array)#.reshape(-1,2,ifo_pred_len)
@@ -328,9 +387,6 @@ if __name__ == "__main__":
             true_idx += 1
 
             stats.append(temp_stats)
-        
-
-
 
         
         print("post predictions took {} seconds".format(time.time() - poststart))
@@ -338,24 +394,27 @@ if __name__ == "__main__":
         #combopreds = np.array(combopreds)
 #         np.save("/fred/oz016/alistair/infernus/timeslides/combopreds_templates_{}-{}_batch_{}_segment_{}.npy".\
 #              format(template_start, template_start + n_templates, batch, segment), save_arr)
-        np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment), zerolags)
-        np.save("/fred/oz016/alistair/infernus/timeslides/stats_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment), zerolags)
+        #np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+        #        format(template_start, template_start + n_templates, batch, segment), zerolags)
+        #np.save("/fred/oz016/alistair/infernus/timeslides/stats_{}-{}_batch_{}_segment_{}.npy".\
+        #        format(template_start, template_start + n_templates, batch, segment), stats)
 
         os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
         os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))
 
-        template_start += n_templates
+        
 
         if batch == args['n_batches'] - 1 and segment == args['n_noise_segments'] - 1:
             print("main job should have finished")
             break
         elif segment == args['n_noise_segments'] - 1:
+            template_start += n_templates
             batch += 1
             segment = 0
+            print("batch is now", batch)
         else:
             segment += 1
+            print("segment is now", segment)
 
         """
         if len(files) > 0:

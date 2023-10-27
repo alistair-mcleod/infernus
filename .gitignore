@@ -6,6 +6,7 @@ notebooks/
 *.ipynb
 *.onnx
 infernus/serving/*/*
+**.npy
 
 # Serving dummy folder test files
 !./infernus/serving/dummy/*.ipynb

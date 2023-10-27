@@ -46,7 +46,12 @@ import numpy as np
 from triggering.zerolags import get_zerolags
 
 #TODO: change to a better way of splitting models
-from model_utils import split_models
+from model_utils import split_models, new_split_models
+
+tf_model='/fred/oz016/alistair/BNS_models/real_glitch_metamodel/log_auc11.h5'
+double_det, combiner = new_split_models(tf_model)
+
+
 
 
 def get_windows(start_end_indexes, peak_pos, pad=True):
@@ -138,6 +143,8 @@ if __name__ == "__main__":
         SNR = np.load('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
         preds = np.load('preds_batch_{}_segment_{}.npy'.format(batch, segment))
 
+        #if n_templates != SNR.shape[1]:
+        #    print("This batch of SNR has a different number of templates ({} vs {})! This is the correct behaviour it's the last batch...".format(SNR.shape[1], n_templates))
         n_templates = SNR.shape[1]
         
         # Calculate zerolags
@@ -166,6 +173,7 @@ if __name__ == "__main__":
             else:
                 segment += 1
                 print("segment is now", segment)
+            continue
 
         # REMOVE ZEROLAGS THAT CORRESPOND TO TIMES THAT REAL EVENTS OCCUR
         # do this by replacing those zerolags with [-1,-1,-1,-1,-1,-1]
@@ -339,7 +347,9 @@ if __name__ == "__main__":
         h_pred_array = pred_array[:,0].reshape(-1,ifo_pred_len)
         l_pred_array = pred_array[:,1].reshape(-1,ifo_pred_len)
         print("pred array shape", pred_array.shape)
-        combined_preds = ifo_dict['combiner'].predict([h_pred_array, l_pred_array], 
+        #combined_preds = ifo_dict['combiner'].predict([h_pred_array, l_pred_array], 
+        #                                                verbose = 2, batch_size = 4096)
+        combined_preds = combiner.predict([h_pred_array, l_pred_array], 
                                                         verbose = 2, batch_size = 4096)
         
         combined_preds = combined_preds.reshape(-1, num_time_slides, 18)
@@ -355,7 +365,7 @@ if __name__ == "__main__":
 
         for key_i, i in enumerate(zerolags):
             if i[0][0] == -1:
-                print(f"Zerolag {key_i} is invalid")
+                #print(f"Zerolag {key_i} is invalid")
                 continue
 
             if true_idx > len(combined_preds):

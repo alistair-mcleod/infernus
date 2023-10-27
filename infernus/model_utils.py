@@ -2,11 +2,17 @@
 #ADDING KERAS STUFF
 import keras
 import sys
+
+
+
+from queue import Queue
+from typing import Optional
+from tritonclient.grpc._infer_result import InferResult
+from tritonclient.utils import InferenceServerException
+
+#TODO: handle this more gracefully
 sys.path.append("/home/amcleod/detnet/utils")
-
 from train_utils import LogAUC
-import keras
-
 
 def residual_block(X, kernels, conv_stride):
 
@@ -150,3 +156,64 @@ def split_models():
     ifo_dict['combiner'] = post_model
 
     return ifo_dict
+
+
+#ONNX functions
+
+
+
+def onnx_callback(
+    queue: Queue,
+    result: InferResult,
+    error: Optional[InferenceServerException]
+) -> None:
+	"""
+	Callback function to manage the results from 
+	asynchronous inference requests and storing them to a  
+	queue.
+
+	Args:
+		queue: Queue
+			Global variable that points to a Queue where 
+			inference results from Triton are written to.
+		result: InferResult
+			Triton object containing results and metadata 
+			for the inference request.
+		error: Optional[InferenceServerException]
+			For successful inference, error will return 
+			`None`, otherwise it will return an 
+			`InferenceServerException` error.
+	Returns:
+		None
+	Raises:
+		InferenceServerException:
+			If the connected Triton inference request 
+			returns an error, the exception will be raised 
+			in the callback thread.
+	"""
+	try:
+		if error is not None:
+			raise error
+
+		request_id = str(result.get_response().id)
+
+		# necessary when needing only one number of 2D output
+		#np_output = {}
+		#for output in result._result.outputs:
+		#    np_output[output.name] = result.as_numpy(output.name)[:,1]
+
+		# only valid when one output layer is used consistently
+		output = list(result._result.outputs)[0].name
+		np_outputs = result.as_numpy(output)
+
+		response = (np_outputs, request_id)
+
+		if response is not None:
+			queue.put(response)
+
+	except Exception as ex:
+		print("Exception in callback")
+		print("An exception of type occurred. Arguments:")
+		#message = template.format(type(ex).__name__, ex.args)
+		print(type(ex))
+		print(ex)

@@ -1,30 +1,25 @@
-print("Starting SNR serving job")
-
 import time
-start = time.time()
-
-#import sys
-#sys.path.append('/fred/oz016/alistair/GWSamplegen/')
-
-from GWSamplegen.noise_utils import load_psd
-import numpy as np
 import os
-from numpy.lib.stride_tricks import as_strided
+import numpy as np
+import argparse
+import gc
+from queue import Queue
+from functools import partial
+import tritonclient.grpc as grpcclient
+from GWSamplegen.noise_utils import load_psd, get_valid_noise_times
 from GWSamplegen.waveform_utils import load_pycbc_templates
-from GWSamplegen.snr_utils_np import np_get_cutoff_indices
-
+from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq
 from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.types import TimeSeries
 from pycbc.filter import highpass
-import argparse
-import gc
-
-from GWSamplegen.snr_utils_np import mf_in_place, np_sigmasq
-from GWSamplegen.noise_utils import get_valid_noise_times
 
 
 
-
+#infernus imports
+from noise_utils import noise_generator
+from SNR_utils import make_windows_2d
+from model_utils import onnx_callback
+start = time.time()
 
 
 #REGULAR SNR SERIES STUFF
@@ -46,64 +41,8 @@ WINDOW_SIZE = 2048
 STEP = 128
 
 
-def make_windows_2d(time_series_list, window_size=WINDOW_SIZE, step_size=STEP):
-	"""
-	Turns a list of 1D arrays into a 3D array of sequential labelled windows of window_size with horizon size label.
-	"""
-	# Convert the list of time series into a 2D numpy array
-	time_series_array = np.array(time_series_list)
-
-	num_series, series_length = time_series_array.shape
-
-	#print("WINDOW STATS",num_series, series_length)
-
-	# Calculate the number of windows for each time series
-	num_windows = (series_length - window_size) // step_size + 1
-	#print(num_windows)
-
-	# Calculate the strides for creating the windowed view
-	strides = time_series_array.strides + (time_series_array.strides[-1] * step_size,)
-
-	#print("strides:", strides)
-
-	# Use as_strided to create a view of the data
-	windowed_array = as_strided(
-		time_series_array,
-		shape=(num_series, num_windows, window_size),
-		strides=(strides[0], strides[2], strides[1])
-	)
-    
-
-	return windowed_array
-
-from noise_utils import noise_generator
-""" 
-def noise_generator(valid_times, paths, file_list, duration, sample_rate):
-	file_idx = 0
-	
-	for i in range(len(valid_times)):
-		#print(i)
-		if i == 0:
-			noise = np.load(file_list[file_idx])
-		
-		if valid_times[i] + duration > int(paths[file_idx][1]) + int(paths[file_idx][2]):
-			file_idx += 1
-			print("loading new file")
-			noise = np.load(file_list[file_idx])
-			
-		if int(paths[file_idx][1]) <= valid_times[i]:
-			#print("start time good")
-			if int(paths[file_idx][1]) + int(paths[file_idx][2]) >= valid_times[i] + duration:
-				start_idx = int((valid_times[i] - int(paths[file_idx][1])) * sample_rate)
-				end_idx = int(start_idx + duration * sample_rate)
-				#print(start_idx, end_idx)
-				yield noise[:,start_idx:end_idx]
- """
-
 
 valid_times, paths, file_list = get_valid_noise_times(noise_dir,duration, 900)
-
-
 templates, metricParams, aXis= load_pycbc_templates("PyCBC_98_aligned_spin", "/fred/oz016/alistair/GWSamplegen/template_banks/")
 
 N = int(duration/delta_t)
@@ -173,18 +112,6 @@ print("I am using {} GPUs".format(n_gpus))
 #ADDING TRITON STUFF
 
 
-from functools import partial
-import time
-import os
-from queue import Queue
-from typing import Optional
-import tritonclient.grpc as grpcclient
-#from tritonclient.utils import triton_to_np_dtype
-from tritonclient.grpc._infer_result import InferResult
-from tritonclient.utils import InferenceServerException
-
-#gpu_node = "john108"
-#gpu_node = 
 print("connecting to {} on port {}".format(gpu_node, grpc_port))
 print("new GRPC port on", grpc_port+3)
 
@@ -221,74 +148,6 @@ outputl = grpcclient.InferRequestedOutput("l_out")
 
 
 callback_q = Queue()
-#queue_h = Queue()
-#queue_l = Queue()
-
-def onnx_callback(
-    queue: Queue,
-    result: InferResult,
-    error: Optional[InferenceServerException]
-) -> None:
-	"""
-	Callback function to manage the results from 
-	asynchronous inference requests and storing them to a  
-	queue.
-
-	Args:
-		queue: Queue
-			Global variable that points to a Queue where 
-			inference results from Triton are written to.
-		result: InferResult
-			Triton object containing results and metadata 
-			for the inference request.
-		error: Optional[InferenceServerException]
-			For successful inference, error will return 
-			`None`, otherwise it will return an 
-			`InferenceServerException` error.
-	Returns:
-		None
-	Raises:
-		InferenceServerException:
-			If the connected Triton inference request 
-			returns an error, the exception will be raised 
-			in the callback thread.
-	"""
-	try:
-		if error is not None:
-			raise error
-
-		request_id = str(result.get_response().id)
-
-		# necessary when needing only one number of 2D output
-		#np_output = {}
-		#for output in result._result.outputs:
-		#    np_output[output.name] = result.as_numpy(output.name)[:,1]
-
-		# only valid when one output layer is used consistently
-		output = list(result._result.outputs)[0].name
-		np_outputs = result.as_numpy(output)
-
-		response = (np_outputs, request_id)
-
-		if response is not None:
-			queue.put(response)
-
-	except Exception as ex:
-		print("Exception in callback")
-		print("An exception of type occurred. Arguments:")
-		#message = template.format(type(ex).__name__, ex.args)
-		print(type(ex))
-		print(ex)
-		
-
-
-
-
-
-
-
-
-
 
 
 #MAKING JOB SMALLER
@@ -387,18 +246,8 @@ n_templates = templates_per_batch
 t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
 
 
-#from model_utils import split_models
-
-#ifo_dict = split_models()
-
-#adding tensorflow stuff
-#import tensorflow as tf
-
-
 global windowed_SNR
-#global strain_np
 global template_conj
-#global template_norm
 
 #flush prints
 import sys

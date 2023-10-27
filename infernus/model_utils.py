@@ -18,6 +18,36 @@ def residual_block(X, kernels, conv_stride):
     return out
 
 
+def new_split_models(model_path):
+    #split a model into two different models: one which takes an input from each detector, 
+    #and one which takes an input from the previous model. However, you'll have to split the output of model 1
+    #in two before passing to model 2 (this is necessary for time shifts anyway.)
+    model = keras.models.load_model(model_path, custom_objects={'LogAUC': LogAUC()})
+    for i in range(len(model.layers)):
+        #print(model.layers[i].name)
+        if model.layers[i].name == "concat" or model.layers[i].name == "concatenate":
+            concat_layer = i
+            
+    double_det = keras.models.Model(inputs = model.input, outputs = model.layers[concat_layer].output)
+    double_det.compile()
+    ifo_pred_size = double_det.output.shape[1]//2
+
+    h_out = keras.Input([ifo_pred_size], name="Hanford_out")
+    l_out = keras.Input([ifo_pred_size], name="Livingston_out")
+
+    X = keras.layers.Concatenate()([h_out,l_out])
+
+    #rest of the model follows from model.layers[concat_layer+1:]
+    for i in range(concat_layer+1, len(model.layers)):
+        X = model.layers[i](X)
+
+    combiner = keras.models.Model(inputs = [h_out, l_out], outputs = X)
+    combiner.layers[-1].activation = keras.activations.linear
+    combiner.compile()
+
+    return double_det, combiner
+
+
 
 def split_models():
 

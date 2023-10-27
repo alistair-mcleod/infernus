@@ -6,8 +6,7 @@ start = time.time()
 #import sys
 #sys.path.append('/fred/oz016/alistair/GWSamplegen/')
 
-from GWSamplegen.noise_utils import fetch_noise_loaded, load_noise, load_psd
-from typing import List, Tuple
+from GWSamplegen.noise_utils import load_psd
 import numpy as np
 import os
 from numpy.lib.stride_tricks import as_strided
@@ -20,7 +19,7 @@ from pycbc.filter import highpass
 import argparse
 import gc
 
-from GWSamplegen.snr_utils_np import numpy_matched_filter, mf_in_place, np_sigmasq
+from GWSamplegen.snr_utils_np import mf_in_place, np_sigmasq
 from GWSamplegen.noise_utils import get_valid_noise_times
 
 
@@ -77,7 +76,8 @@ def make_windows_2d(time_series_list, window_size=WINDOW_SIZE, step_size=STEP):
 
 	return windowed_array
 
-
+from noise_utils import noise_generator
+""" 
 def noise_generator(valid_times, paths, file_list, duration, sample_rate):
 	file_idx = 0
 	
@@ -98,7 +98,7 @@ def noise_generator(valid_times, paths, file_list, duration, sample_rate):
 				end_idx = int(start_idx + duration * sample_rate)
 				#print(start_idx, end_idx)
 				yield noise[:,start_idx:end_idx]
-
+ """
 
 
 valid_times, paths, file_list = get_valid_noise_times(noise_dir,duration, 900)
@@ -138,6 +138,7 @@ parser.add_argument('--totaljobs', type=int, default=1)
 parser.add_argument('--node', type=str, default="john108")
 parser.add_argument('--port', type=int, default=8001)
 parser.add_argument('--ngpus', type=int, default=1)
+parser.add_argument('--injectionfile', type=str, default=None)
 
 args = parser.parse_args()
 
@@ -148,11 +149,13 @@ n_jobs = args.totaljobs
 gpu_node = args.node
 grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
 n_gpus = args.ngpus
+injfile = args.injectionfile
 
 myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
 print("my folder is", myfolder)
 
 print("starting job {} of {}".format(job_id, n_jobs))
+old_job_id = job_id
 print("I am worker {} of {} for this server".format(worker_id, n_workers))
 job_id = worker_id + job_id*n_workers
 print("my unique index is {}".format(job_id))
@@ -173,11 +176,10 @@ print("I am using {} GPUs".format(n_gpus))
 from functools import partial
 import time
 import os
-from queue import Empty, Queue
-from tqdm import tqdm
+from queue import Queue
 from typing import Optional
 import tritonclient.grpc as grpcclient
-from tritonclient.utils import triton_to_np_dtype
+#from tritonclient.utils import triton_to_np_dtype
 from tritonclient.grpc._infer_result import InferResult
 from tritonclient.utils import InferenceServerException
 
@@ -192,9 +194,14 @@ if n_gpus == 1:
 else:
 	batch_size = 512
 
-model = "test-bns-1024"
-modelh = "test-h-512"
+model = "test-bns-1024" #the model used by a 1 gpu server
+model = "new-hl-1024"
+
+modelh = "test-h-512"   #the models used by a 2 gpu server
+modelh = "new-h-1024"
+
 modell = "test-l-512"
+modell = "new-l-1024"
 
 # Setting up client
 
@@ -208,7 +215,7 @@ inputh = grpcclient.InferInput("h", dummy_data.shape, datatype="FP32")
 inputl = grpcclient.InferInput("l", dummy_data.shape, datatype="FP32")
 
 #handle both one and two model cases
-output = grpcclient.InferRequestedOutput("concatenate")
+output = grpcclient.InferRequestedOutput("concat")
 outputh = grpcclient.InferRequestedOutput("h_out")
 outputl = grpcclient.InferRequestedOutput("l_out")
 
@@ -222,59 +229,57 @@ def onnx_callback(
     result: InferResult,
     error: Optional[InferenceServerException]
 ) -> None:
-    """
-    Callback function to manage the results from 
-    asynchronous inference requests and storing them to a  
-    queue.
+	"""
+	Callback function to manage the results from 
+	asynchronous inference requests and storing them to a  
+	queue.
 
-    Args:
-        queue: Queue
-            Global variable that points to a Queue where 
-            inference results from Triton are written to.
-        result: InferResult
-            Triton object containing results and metadata 
-            for the inference request.
-        error: Optional[InferenceServerException]
-            For successful inference, error will return 
-            `None`, otherwise it will return an 
-            `InferenceServerException` error.
-    Returns:
-        None
-    Raises:
-        InferenceServerException:
-            If the connected Triton inference request 
-            returns an error, the exception will be raised 
-            in the callback thread.
-    """
-    try:
-        if error is not None:
-            raise error
+	Args:
+		queue: Queue
+			Global variable that points to a Queue where 
+			inference results from Triton are written to.
+		result: InferResult
+			Triton object containing results and metadata 
+			for the inference request.
+		error: Optional[InferenceServerException]
+			For successful inference, error will return 
+			`None`, otherwise it will return an 
+			`InferenceServerException` error.
+	Returns:
+		None
+	Raises:
+		InferenceServerException:
+			If the connected Triton inference request 
+			returns an error, the exception will be raised 
+			in the callback thread.
+	"""
+	try:
+		if error is not None:
+			raise error
 
-        request_id = str(result.get_response().id)
+		request_id = str(result.get_response().id)
 
-        # necessary when needing only one number of 2D output
-        #np_output = {}
-        #for output in result._result.outputs:
-        #    np_output[output.name] = result.as_numpy(output.name)[:,1]
+		# necessary when needing only one number of 2D output
+		#np_output = {}
+		#for output in result._result.outputs:
+		#    np_output[output.name] = result.as_numpy(output.name)[:,1]
 
-        # only valid when one output layer is used consistently
-        output = list(result._result.outputs)[0].name
-        np_outputs = result.as_numpy(output)
+		# only valid when one output layer is used consistently
+		output = list(result._result.outputs)[0].name
+		np_outputs = result.as_numpy(output)
 
-        response = (np_outputs, request_id)
+		response = (np_outputs, request_id)
 
-        if response is not None:
-            queue.put(response)
+		if response is not None:
+			queue.put(response)
 
-    except Exception as ex:
-        print("Exception in callback")
-        message = "An exception of type {} occurred. Arguments:\n{}".format(type(ex).__name__, ex.args)
-        #message = template.format(type(ex).__name__, ex.args)
-        print(message)
-
-
-
-
+	except Exception as ex:
+		print("Exception in callback")
+		print("An exception of type occurred. Arguments:")
+		#message = template.format(type(ex).__name__, ex.args)
+		print(type(ex))
+		print(ex)
+		
 
 
 
@@ -287,18 +292,37 @@ def onnx_callback(
 
 
 #MAKING JOB SMALLER
-templates = templates[:n_jobs*30*10]
+#templates = templates[:n_jobs*30*10]
+#templates = templates[:1487]
+templates = templates[:]
 
 total_templates = len(templates)
+
+print("total templates:", total_templates)
 templates_per_job = int(np.ceil((len(templates)/n_jobs)))
+main_job_templates = templates_per_job
 last_job_templates = total_templates - templates_per_job * (n_jobs - 1)
+
+total_lastjob = last_job_templates + templates_per_job
+print("total templates in last job:", total_lastjob)
 
 
 template_start = templates_per_job * job_id
 
-if job_id == n_jobs - 1:
-	templates_per_job = last_job_templates
-	print("last job, only doing {} templates".format(templates_per_job))
+#if job_id == n_jobs - 1:
+#	templates_per_job = last_job_templates
+#	print("last job, only doing {} templates".format(templates_per_job))
+
+if old_job_id == n_jobs/n_workers - 1:
+	print("I'm a worker in the last job.")
+	if worker_id == 0:
+		templates_per_job = int(np.ceil(total_lastjob/2))
+		template_start = total_templates - total_lastjob
+		
+	if worker_id == 1:
+		templates_per_job = int(np.floor(total_lastjob/2))
+		template_start = total_templates - templates_per_job
+
 
 print("templates per job:", templates_per_job)
 #templates_per_batch is the target number of templates to do per batch.
@@ -309,11 +333,12 @@ n_batches = int(np.ceil(templates_per_job/templates_per_batch))
 
 print("batches per job:", n_batches)
 
+
 n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
-n_noise_segments = 50
-#n_noise_segments = 10
+#n_noise_segments = 50
+n_noise_segments = 10
 
 
 window_size = 2048
@@ -375,28 +400,6 @@ global windowed_SNR
 global template_conj
 #global template_norm
 
-
-def strain2SNR(ifo):
-	strain = TimeSeries(noise[ifos.index(ifo)], delta_t=delta_t, copy=False)
-	strain = highpass(strain,f_lower).to_frequencyseries(delta_f=delta_f).data
-	strain = np.array([strain])[:,kmin:kmax]
-	strain_np = np.repeat(strain, n_templates, axis=0)
-	#strain_time += time.time() - start
-
-	#start = time.time()
-	template_norm = np_sigmasq(t_templates, psds[ifo], N, kmin, kmax, delta_f)
-	y = mf_in_place(strain_np, psds[ifo], N, kmin, kmax, template_conj, template_norm)
-
-	#print("y shape:", y.shape)
-	#mf_time += time.time() - start
-
-	#start = time.time()
-	windowed = np.array(make_windows_2d(np.abs(y[:,start_cutoff*sample_rate:end_cutoff*sample_rate]).astype(np.float32), 
-							window_size, stride))
-	#window_time += time.time() - start
-	#print("in the function, {} windowed_SNR starts with {}".format(ifo, windowed[0][0][:10]))
-	return windowed
-
 #flush prints
 import sys
 sys.stdout.flush()
@@ -411,6 +414,7 @@ for i in range(n_batches):
 	if i == n_batches - 1:
 		print("loading templates in range",template_start_idx, templates_per_job + template_start)
 		n_templates =  (templates_per_job + template_start) - template_start_idx
+		t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
 		print("last templates for this job, only {}".format(n_templates))
 	else:
 		print("loading templates in range",template_start_idx, (i+1)*templates_per_batch + template_start)
@@ -447,15 +451,6 @@ for i in range(n_batches):
 		print("noise segment", j)
 		noise = next(noise_gen)
 		noise_time += time.time() - start
-
-		#template_norm = np_sigmasq(t_templates, psds[ifos[ifo]], N, kmin, kmax, delta_f)
-		#start = time.time()
-		#with mp.Pool(n_cpus) as p:
-		#	windowed_SNR = np.array(p.map(strain2SNR, ifos))
-		#	#p.map(strain2SNR, ifos)
-
-		#mf_time += time.time() - start
-
 		
 		for ifo in range(len(ifos)):
 			
@@ -512,8 +507,8 @@ for i in range(n_batches):
 					if (n_gpus == 1 and triton_client.is_server_ready()) or \
 					   (n_gpus == 2 and triton_client.is_server_ready() and triton_client2.is_server_ready()) :
 
-						#print("worker {} will sleep for {} seconds".format(worker_id, worker_id*7))
-						#time.sleep(worker_id*7)
+						#print("worker {} will sleep for {} seconds".format(worker_id, worker_id*5))
+						#time.sleep(worker_id*5)
 						break
 					else:
 						print("waiting for server to be live")
@@ -545,7 +540,7 @@ for i in range(n_batches):
 		reshape_time += time.time() - start
 
 		tritonbatches = int(np.ceil(windowed_SNR.shape[1]/batch_size))
-		total_batches_sent += 2* tritonbatches #to account for 2 workers
+		total_batches_sent += n_workers* tritonbatches #to account for 2 workers
 
 
 		#workers wait before sending their first batch so that the server processes them in the correct order
@@ -561,9 +556,25 @@ for i in range(n_batches):
 			reqbatches = int(total_batches_sent - 2.3 * tritonbatches)
 		if worker_id == 1:
 			reqbatches = int(total_batches_sent - 1.3 * tritonbatches)
+		#if worker_id == 2:
+		#	reqbatches = int(total_batches_sent - 0.3 * tritonbatches)
+		if old_job_id == n_jobs/n_workers - 1 and i == n_batches - 1 and worker_id == 0:
+			#if worker_id == 0:
+			reqbatches -= tritonbatches * 0.5
+			print("removing a small amount of required batches from worker 0")
+			#if i >= int(np.ceil(last_job_templates/templates_per_batch)):
+			#	#in this case, worker 0 will have to send more batches than worker 1 and so we can send immediately
+			#	reqbatches = 0
+			#	print("this worker has free reign to send as many batches as it wants now")
+			#elif i == int(np.ceil(last_job_templates/templates_per_batch)) - 1:
+			#	#in this case, worker 1 has fewer templates and so we need to reduce worker 0's sending requirement
+			#	reqbatches -= tritonbatches * 0.5
+			#print("sending in whatever order, as one of these jobs may have fewer templates")
+
 					
 		while successes < reqbatches:
 			print("worker waiting, only {} successes. we need {}".format(successes, reqbatches))
+			#print("queue size:",triton_client.get_inference_statistics(model).model_stats[0].inference_stats.nv_inference_pending_request_count.count)
 			sys.stdout.flush()
 			time.sleep(1)
 			if n_gpus == 1:
@@ -647,12 +658,17 @@ for i in range(n_batches):
 		pred_time += time.time() - predstart
 
 		det_output_shape = all_responses[0][0].shape[-1]
-		#print("det output shape:", det_output_shape)
+		if i == 0 and j == 0:
+			print("det output shape:", det_output_shape)
 
 		start = time.time()
 		#newshape
 		#should have shape (n_templates, n_windows, 4). TODO: handle arbitrary prediction length, not just 2 per det
-		predbuf = np.empty((newshape[1], 4), dtype=np.float32)
+		if n_gpus == 1:
+			predbuf = np.empty((newshape[1], det_output_shape), dtype=np.float32)
+		else:
+			predbuf = np.empty((newshape[1], det_output_shape*2), dtype=np.float32)
+
 		for r in range(len(all_responses)):
 			response_header = all_responses[r][1].split("_")
 			idx = int(response_header[0])
@@ -667,19 +683,19 @@ for i in range(n_batches):
 				ifo = response_header[2]
 				if bufsize == 0:
 					if ifo == "h":
-						predbuf[idx*batch_size : (idx+1)*batch_size, :2] = all_responses[r][0]
+						predbuf[idx*batch_size : (idx+1)*batch_size, :det_output_shape] = all_responses[r][0]
 					else:
-						predbuf[idx*batch_size : (idx+1)*batch_size, 2:] = all_responses[r][0]
+						predbuf[idx*batch_size : (idx+1)*batch_size, det_output_shape:] = all_responses[r][0]
 				else:
 					if ifo == "h":
-						predbuf[idx*batch_size : (idx+1)*batch_size, :2] = all_responses[r][0][:batch_size-bufsize]
+						predbuf[idx*batch_size : (idx+1)*batch_size, :det_output_shape] = all_responses[r][0][:batch_size-bufsize]
 					else:
-						predbuf[idx*batch_size : (idx+1)*batch_size, 2:] = all_responses[r][0][:batch_size-bufsize]
+						predbuf[idx*batch_size : (idx+1)*batch_size, det_output_shape:] = all_responses[r][0][:batch_size-bufsize]
 
 					
 
 		
-		predbuf = predbuf.reshape(n_templates, -1, 4)
+		predbuf = predbuf.reshape(n_templates, -1, predbuf.shape[-1])
 		print("predbuf shape",predbuf.shape)
 		
 		
@@ -693,7 +709,7 @@ for i in range(n_batches):
 		
 		
 		timeslide_time += time.time() - start
-		print("timeslide time:", time.time() - start)
+		#print("timeslide time:", time.time() - start)
 		
 
 		del all_responses

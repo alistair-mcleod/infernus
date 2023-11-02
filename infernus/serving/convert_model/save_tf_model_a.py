@@ -25,16 +25,34 @@ if __name__ == "__main__":
     # modifications that are required
     model_path = str(sys.argv[1])
     new_model_path = str(sys.argv[2])
+    
 
     model = keras.models.load_model(model_path, custom_objects={'LogAUC': LogAUC()})
     
     for i in range(len(model.layers)):
-        if model.layers[i].name == 'concatenate':
+        print(model.layers[i].name)
+        if model.layers[i].name == 'concatenate' or model.layers[i].name == 'concat':
             concat_layer = i
-            #print(i)
+            print(i)
+    
+    #rename layer concat_layer-2 to 'h_out'
+    #rename layer concat_layer-1 to 'l_out'
 
-    hlmodel = keras.Model(inputs = [model.layers[0].input, model.layers[1].input], outputs = model.layers[concat_layer].output)
+    model.layers[concat_layer-2]._name = 'h_out'
+    model.layers[concat_layer-1]._name = 'l_out'
+
+    hmodel = keras.Model(inputs = model.layers[0].input, outputs = model.layers[concat_layer-2].output)
+    lmodel = keras.Model(inputs = model.layers[1].input, outputs = model.layers[concat_layer-1].output)
+    hmodel.compile()
+    lmodel.compile()
+
+    hlmodel = keras.Model(inputs = model.input, outputs = model.layers[concat_layer].output)
+    #hlmodel.layers[-1]._name = 'concatenate'
+    #print output shape
+    print("HL model output shape:",hlmodel.output.shape)
     hlmodel.compile()    
 
     # Save TensorFlow model to default folder structure
-    hlmodel.save(new_model_path)
+    hlmodel.save(new_model_path + "_hl")
+    hmodel.save(new_model_path + "_h")
+    lmodel.save(new_model_path + "_l")

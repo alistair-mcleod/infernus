@@ -133,8 +133,10 @@ def get_zerolags(
         # Chooses best zerolags by maximum coherent SNR
         try:
             new_zerolag = get_best_zerolags(temp_zerolags, num_trigs)
-            if new_zerolag not in zerolags or new_zerolag[0][0] == -1:  # Prevents duplicate zerolags
+            if new_zerolag not in zerolags or new_zerolag[0][0] == -1:  # Add new zerolag
                 zerolags.append(new_zerolag)
+            elif new_zerolag in zerolags:  # Replace duplicate zerolag
+                zerolags.append([[-1,-1,-1,-1,-1,-1]])
         except:
             continue
     

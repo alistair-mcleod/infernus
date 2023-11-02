@@ -119,7 +119,8 @@ print("new GRPC port on", grpc_port+3)
 if n_gpus == 1:
 	batch_size = 1024
 else:
-	batch_size = 512
+	batch_size = 1024
+	#batch_size = 512
 
 model = "test-bns-1024" #the model used by a 1 gpu server
 model = "new-hl-1024"
@@ -151,9 +152,9 @@ callback_q = Queue()
 
 
 #MAKING JOB SMALLER
-#templates = templates[:n_jobs*30*10]
+templates = templates[:n_jobs*30*10+605]
 #templates = templates[:1487]
-templates = templates[:]
+#templates = templates[:]
 
 total_templates = len(templates)
 
@@ -197,7 +198,7 @@ n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
 #n_noise_segments = 50
-n_noise_segments = 10
+n_noise_segments = 30
 
 
 window_size = 2048
@@ -368,19 +369,11 @@ for i in range(n_batches):
 					time.sleep(1)
 
 		start = time.time()
-		#with mp.Pool(n_cpus) as p:
-		#	results = p.map(distribute_preds, [[windowed_SNR[ifos.index(ifo)], ifo] for ifo in ifos] )
+
 		
-		#print("triton send shape:", windowed_SNR[0]")
-		#print("example windowed SNR:", windowed_SNR[0, 0, 0:batch_size, :])
 		print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
 		total_batches = 0
 
-		#windowed_SNR = windowed_SNR[:, :, chop_index:]
-
-		
-
-		#print("pre reshaping:", windowed_SNR[:,0,0,0])
 		#reshape into (2, flattened_windowed_SNR, 2048)
 		windowed_SNR = windowed_SNR.reshape(2, -1, 2048)
 		newshape = windowed_SNR.shape
@@ -409,8 +402,10 @@ for i in range(n_batches):
 		#	reqbatches = int(total_batches_sent - 0.3 * tritonbatches)
 		if old_job_id == n_jobs/n_workers - 1 and i == n_batches - 1 and worker_id == 0:
 			#if worker_id == 0:
-			reqbatches -= tritonbatches * 0.5
-			print("removing a small amount of required batches from worker 0")
+			#if there are an odd number of templates, worker 1 processes 1 less. so worker 0 needs to reduce the number of batches it waits for.
+			overflow = 2*(n_templates/(n_templates - total_lastjob%2) -1)  
+			reqbatches -= int(np.ceil(tritonbatches * overflow))
+			print("removing {} required batches from worker 0".format(int(tritonbatches * overflow)))
 			#if i >= int(np.ceil(last_job_templates/templates_per_batch)):
 			#	#in this case, worker 0 will have to send more batches than worker 1 and so we can send immediately
 			#	reqbatches = 0
@@ -468,26 +463,15 @@ for i in range(n_batches):
 				triton_client2.async_infer(model_name=modell, inputs=[inputl], outputs=[outputl],
 								request_id=request_id_l, callback=partial(onnx_callback,callback_q))
 				total_batches += 2
-
-			
-			
-				
-			#print("taking a small break from sending")
-			#print("queue size:",triton_client.get_inference_statistics().model_stats[0].inference_stats.queue.count)
-			#time.sleep(0.1)
 		
 		print("sending time:", time.time()- predstart)
 		start = time.time()
 
 		del windowed_SNR
-		#del strain
-		#del strain_np
-		#gc.collect()
 
 		print("total batches sent:", total_batches)
 		all_responses = []
-		#responses_h  = []
-		#responses_l  = []
+
 
 		count = 0
 		while True:
@@ -496,10 +480,6 @@ for i in range(n_batches):
 				#print(count)
 				response = callback_q.get()
 				all_responses.append(response)
-				#responseh = queue_h.get()
-				#responses_h.append(responseh)
-				#responsel = queue_l.get()
-				#responses_l.append(responsel)
 			else:
 				break
 		print(f"infer time: {time.time() - start}")
@@ -553,17 +533,12 @@ for i in range(n_batches):
 		np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
 		np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
 
-		#np.save(os.path.join("/fred/oz016/alistair/infernus/timeslides/", "SNR_batch_{}_segment_{}_worker{}.npy".format(i, j,job_id)), nonwindowed_SNR)
-		#np.save(os.path.join("/fred/oz016/alistair/infernus/timeslides/", "preds_batch_{}_segment_{}_worker{}.npy".format(i, j,job_id)), predbuf)
 		
 		
 		timeslide_time += time.time() - start
-		#print("timeslide time:", time.time() - start)
 		
 
 		del all_responses
-		#del responses_h
-		#del responses_l
 
 		gc.collect()
 

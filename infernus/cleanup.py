@@ -40,7 +40,6 @@ import argparse
 import time
 import sys
 import gc
-
 import numpy as np
 
 from triggering.zerolags import get_zerolags
@@ -54,18 +53,23 @@ double_det, combiner = new_split_models(tf_model)
 
 
 
-def get_windows(start_end_indexes, peak_pos, pad=True):
+def get_windows(start_end_indexes, peak_pos, pad=True, stride = 128):
     windows = []
     #print(peak_pos)
     #print(start_end_indexes[max(peak_pos//128-100,0)])
     #print(start_end_indexes[min(peak_pos//128+100, len(start_end_indexes))])
-    for key,val in enumerate(start_end_indexes[max(peak_pos//128-100,0):min(peak_pos//128+100, len(start_end_indexes))]):
+    peak_idx = peak_pos//stride #the index of the peak pos
+    buf = 2*sample_rate//stride #a range of windows to search around
+    for key,val in enumerate(start_end_indexes[max(peak_idx - buf,0):min(peak_idx + buf, len(start_end_indexes))]):
         if val[0] <= peak_pos <= val[1]:
-            windows.append(key+max(peak_pos//128-100,0))
+            windows.append(key+max(peak_idx-buf,0))
 
     #TODO: check if this is correct behaviour
     if len(windows) == 0:
         print("this zerolag is invalid due to insufficient windows")
+        return windows
+    if windows[0] < 0 or windows[-1] >= len(start_end_indexes):
+        print("this zerolag is invalid due to windows out of range")
         return windows
     if pad:
         windows.append(windows[-1] + 1)
@@ -196,9 +200,14 @@ if __name__ == "__main__":
         pstart = time.time()
 
         pred_array = []
+        preds_8hz = []
+        preds_4hz = []
+        preds_2hz = []
+
+
         primary_dets = []
         secondary_dets = []
-        zl_lens = []
+        secondary_centrals_list = []
 
         prestart = time.time()
         window_time = 0
@@ -208,11 +217,7 @@ if __name__ == "__main__":
         spreds = 0
         appends = 0
 
-        #save the zerolags to disk
-        print("saving to zerolag file: /fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment))
-        np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment), zerolags)
+
 
         print("there are {} zerolags".format(len(zerolags)))
         windowed_sample_end_indexes = list(range(sample_rate-1, SNR.shape[-1], sample_rate//args["inference_rate"]))
@@ -236,6 +241,10 @@ if __name__ == "__main__":
 
             
             primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
+            primary_det_8hz_samples = get_windows(start_end_indexes[::2], primary_det_pos, stride = 256)
+            primary_det_4hz_samples = get_windows(start_end_indexes[::4], primary_det_pos, stride = 512)
+            primary_det_2hz_samples = get_windows(start_end_indexes[::8], primary_det_pos, stride = 1024)
+
             window_time += time.time() - s
             #add +2 to args[inference rate]
             if len(primary_det_samples) < args["inference_rate"]+2 or primary_det_samples[0] < 0 or primary_det_samples[-1] >= len(start_end_indexes):
@@ -243,13 +252,18 @@ if __name__ == "__main__":
                 print(i)
                 zerolags[key_i][0][0] = -1
                 continue
+            if len(primary_det_2hz_samples) < 4 or primary_det_2hz_samples[0] < 0 or primary_det_2hz_samples[-1] >= len(start_end_indexes[::8]):
+                print("looks like it messed up on the 2 Hz sample")
+                print(i)
+                zerolags[key_i][0][0] = -1
+                continue
                 
             s = time.time()
             # Load predictions of primary detector
             primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
-            if len(primary_preds) != args["inference_rate"]+2:
-                print("primary preds has wrong length")
-                print(primary_preds)
+            primary_8hz = preds[primary_det][int(i[0][5]), primary_det_8hz_samples[0]:primary_det_8hz_samples[-1]+1]
+            primary_4hz = preds[primary_det][int(i[0][5]), primary_det_4hz_samples[0]:primary_det_4hz_samples[-1]+1]
+            primary_2hz = preds[primary_det][int(i[0][5]), primary_det_2hz_samples[0]:primary_det_2hz_samples[-1]+1]
 
             # Get central positions for secondary samples
             secondary_centrals = []
@@ -278,8 +292,6 @@ if __name__ == "__main__":
             # Get max SNR in light travel time around secondary central positions
             # Append necessary stats to stats output list
 
-                        
-            zl_len = 0
             s = time.time()
 
             for j in sorted(secondary_centrals):
@@ -287,6 +299,10 @@ if __name__ == "__main__":
                 peak_pos = j - light_travel_time + np.argmax(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
 
                 secondary_det_samples = get_windows(start_end_indexes, peak_pos)
+                secondary_det_8hz_samples = get_windows(start_end_indexes[::2], peak_pos, stride = 256)
+                secondary_det_4hz_samples = get_windows(start_end_indexes[::4], peak_pos, stride = 512)
+                secondary_det_2hz_samples = get_windows(start_end_indexes[::8], peak_pos, stride = 1024)
+
                 if len(secondary_det_samples) == 0:
                     print("Red alert! a secondary detector has no windows. Hopefully setting the zerolag to -1 fixes it.")
                     zerolags[key_i][0][0] = -1
@@ -296,6 +312,11 @@ if __name__ == "__main__":
                 # Load predictions of secondary detector
                 t = time.time()
                 secondary_preds = preds[secondary_det][int(i[0][5]), secondary_det_samples[0]:secondary_det_samples[-1]+1]
+                secondary_8hz = preds[secondary_det][int(i[0][5]), secondary_det_8hz_samples[0]:secondary_det_8hz_samples[-1]+1]
+                secondary_4hz = preds[secondary_det][int(i[0][5]), secondary_det_4hz_samples[0]:secondary_det_4hz_samples[-1]+1]
+                secondary_2hz = preds[secondary_det][int(i[0][5]), secondary_det_2hz_samples[0]:secondary_det_2hz_samples[-1]+1]
+
+
                 if len(secondary_preds) < 18:
                     print("secondary preds has wrong length")
                     print("s. pred array: ",secondary_preds)
@@ -311,19 +332,31 @@ if __name__ == "__main__":
                 t = time.time()
                 if primary_det == 0:
                     pred_array.append([primary_preds, secondary_preds])
-                    #combined_preds = ifo_dict['combiner'].predict([primary_preds, secondary_preds], verbose = 2)
+                    preds_8hz.append([primary_8hz, secondary_8hz])
+                    preds_4hz.append([primary_4hz, secondary_4hz])
+                    preds_2hz.append([primary_2hz, secondary_2hz])
                 else:
                     pred_array.append([secondary_preds, primary_preds])
-                    #combined_preds = ifo_dict['combiner'].predict([secondary_preds, primary_preds], verbose = 2)
+                    preds_8hz.append([secondary_8hz, primary_8hz])
+                    preds_4hz.append([secondary_4hz, primary_4hz])
+                    preds_2hz.append([secondary_2hz, primary_2hz])
+
                 appends += time.time() - t
 
-                zl_len += 1
-            zl_lens.append(zl_len)
             secondary += time.time() - s
 
             #once we get to here, we know the zerolag is valid, so we can append the primary and secondary detectors
             primary_dets.append(primary_det)
             secondary_dets.append(secondary_det)
+            #we also need to save the secondary centrals
+            secondary_centrals_list.append(sorted(secondary_centrals))
+            #print("secondary centrals for this zerolag:", sorted(secondary_centrals))
+
+        #save the zerolags to disk
+        print("saving to zerolag file: /fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment))
+        np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment), zerolags)
 
         print("pre predictions took {} seconds".format(time.time() - prestart))
         print("window time", window_time)
@@ -346,21 +379,47 @@ if __name__ == "__main__":
         pred_array = np.array(pred_array)#.reshape(-1,2,ifo_pred_len)
         h_pred_array = pred_array[:,0].reshape(-1,ifo_pred_len)
         l_pred_array = pred_array[:,1].reshape(-1,ifo_pred_len)
+
+        preds_8hz_h = np.array(preds_8hz)[:,0].reshape(-1,ifo_pred_len)
+        preds_8hz_l = np.array(preds_8hz)[:,1].reshape(-1,ifo_pred_len)
+
+        preds_4hz_h = np.array(preds_4hz)[:,0].reshape(-1,ifo_pred_len)
+        preds_4hz_l = np.array(preds_4hz)[:,1].reshape(-1,ifo_pred_len)
+
+        preds_2hz_h = np.array(preds_2hz)[:,0].reshape(-1,ifo_pred_len)
+        preds_2hz_l = np.array(preds_2hz)[:,1].reshape(-1,ifo_pred_len)
+
         print("pred array shape", pred_array.shape)
         #combined_preds = ifo_dict['combiner'].predict([h_pred_array, l_pred_array], 
         #                                                verbose = 2, batch_size = 4096)
         combined_preds = combiner.predict([h_pred_array, l_pred_array], 
                                                         verbose = 2, batch_size = 4096)
         
+        combined_8hz = combiner.predict([preds_8hz_h, preds_8hz_l],
+                                                        verbose = 2, batch_size = 4096)
+        
+        combined_4hz = combiner.predict([preds_4hz_h, preds_4hz_l],
+                                                        verbose = 2, batch_size = 4096)
+        
+        combined_2hz = combiner.predict([preds_2hz_h, preds_2hz_l],
+                                                        verbose = 2, batch_size = 4096)
+        
+        
         combined_preds = combined_preds.reshape(-1, num_time_slides, 18)
+        combined_8hz = combined_8hz.reshape(-1, num_time_slides, 10)
+        combined_4hz = combined_4hz.reshape(-1, num_time_slides, 6)
+        combined_2hz = combined_2hz.reshape(-1, num_time_slides, 4)
+
         print("combined preds shape", combined_preds.shape)
+        print("combined 8hz shape", combined_8hz.shape)
+        print("combined 4hz shape", combined_4hz.shape)
+        print("combined 2hz shape", combined_2hz.shape)
+
         #replace with enumerate
         print("finished predictions, took {} seconds".format(time.time() - pstart))
 
         poststart = time.time()
         
-        jsum = 0
-
         true_idx = 0
 
         for key_i, i in enumerate(zerolags):
@@ -375,24 +434,46 @@ if __name__ == "__main__":
 
             temp_stats = []
 
-            for idx_j, j in enumerate(sorted(secondary_centrals)):
+            for idx_j, j in enumerate(secondary_centrals_list[true_idx]):
+            #for idx_j in range(num_time_slides):
                 peak = np.max(SNR[secondary_dets[true_idx], int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
+                #print("peak for ZL {}, TS {} is {}".format(key_i, idx_j, peak))
                 # COMPUTE MOVING AVERAGE PREDICTIONS
+                ma_prediction_2hz = []
+                ma_prediction_4hz = []
+                ma_prediction_8hz = []
                 ma_prediction_16hz = []
                 start = args["inference_rate"]
                 while start <= len(combined_preds[true_idx][idx_j]):
                     ma_prediction_16hz.append(np.mean(combined_preds[true_idx][idx_j][:start]))
                     start += 1
+                start = args["inference_rate"]//2
+                while start <= len(combined_8hz[true_idx][idx_j]):
+                    ma_prediction_8hz.append(np.mean(combined_8hz[true_idx][idx_j][:start]))
+                    start += 1
+                start = args["inference_rate"]//4
+                while start <= len(combined_4hz[true_idx][idx_j]):
+                    ma_prediction_4hz.append(np.mean(combined_4hz[true_idx][idx_j][:start]))
+                    start += 1
+                start = args["inference_rate"]//8
+                while start <= len(combined_2hz[true_idx][idx_j]):
+                    ma_prediction_2hz.append(np.mean(combined_2hz[true_idx][idx_j][:start]))
+                    start += 1
+                ma_prediction_2hz = max(ma_prediction_2hz)
+                ma_prediction_4hz = max(ma_prediction_4hz)
+                ma_prediction_8hz = max(ma_prediction_8hz)
                 ma_prediction_16hz = max(ma_prediction_16hz)
                 #print(f"MA pred: {ma_prediction_16hz}")
 
                 # Format is (H1 SNR, L1 SNR, Network SNR, Moving Average Prediction)
+                #for each Hz, we have MA and max pred 
+                #max pred for each is easy to get, it's just max(combined_xhz[true_idx][idx_j][1:-1])
                 # Need individual detector SNRs so they can be combined and filtered properly with new batches of templates on the same noise data
-                new_stat = [-1, -1, np.sqrt(np.square(i[0][primary_dets[true_idx]]) + np.square(peak)).astype(np.float32), ma_prediction_16hz, "ma_prediction_8hz", "ma_prediction_4hz", "ma_prediction_2hz"]
+                new_stat = [-1, -1, np.sqrt((i[0][primary_dets[true_idx]])**2 + peak**2).astype(np.float32), ma_prediction_16hz, ma_prediction_8hz, ma_prediction_4hz, ma_prediction_2hz]
                 new_stat[primary_dets[true_idx]] = i[0][primary_dets[true_idx]]
                 new_stat[secondary_dets[true_idx]] = peak
                 temp_stats.append(new_stat)
-                jsum += 1
+                #print("new stat for ZL {} TS {} is {}".format(key_i, idx_j, new_stat))
                 
             true_idx += 1
 
@@ -406,8 +487,8 @@ if __name__ == "__main__":
 #              format(template_start, template_start + n_templates, batch, segment), save_arr)
         #np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
         #        format(template_start, template_start + n_templates, batch, segment), zerolags)
-        #np.save("/fred/oz016/alistair/infernus/timeslides/stats_{}-{}_batch_{}_segment_{}.npy".\
-        #        format(template_start, template_start + n_templates, batch, segment), stats)
+        np.save("/fred/oz016/alistair/infernus/timeslides/stats_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment), stats)
 
         os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
         os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))

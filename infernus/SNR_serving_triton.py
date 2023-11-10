@@ -1,8 +1,10 @@
 import time
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
 import argparse
 import gc
+import h5py
 from queue import Queue
 from functools import partial
 import tritonclient.grpc as grpcclient
@@ -25,7 +27,7 @@ start = time.time()
 #REGULAR SNR SERIES STUFF
 
 
-noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_first_week_1024"
+noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
 duration = 1024
 sample_rate = 2048
 delta_t = 1/sample_rate
@@ -64,7 +66,7 @@ hp, _ = get_td_waveform(mass1 = templates[0,1], mass2 = templates[0,2],
 						delta_t = delta_t, f_lower = f_lower, approximant = 'SpinTaylorT4')
 
 max_waveform_length = len(hp)/sample_rate
-max_waveform_length = max(12, int(np.ceil(max_waveform_length/10)*10))
+max_waveform_length = max(32, int(np.ceil(max_waveform_length/10)*10))
 
 
 
@@ -77,7 +79,7 @@ parser.add_argument('--totaljobs', type=int, default=1)
 parser.add_argument('--node', type=str, default="john108")
 parser.add_argument('--port', type=int, default=8001)
 parser.add_argument('--ngpus', type=int, default=1)
-parser.add_argument('--injectionfile', type=str, default=None)
+parser.add_argument('--injfile', type=str, default=None)
 
 args = parser.parse_args()
 
@@ -88,7 +90,9 @@ n_jobs = args.totaljobs
 gpu_node = args.node
 grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
 n_gpus = args.ngpus
-injfile = args.injectionfile
+injfile = args.injfile
+if injfile == "None":
+	injfile = None
 
 myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
 print("my folder is", myfolder)
@@ -103,9 +107,48 @@ print("there are {} jobs in total".format(n_jobs))
 print("I am using {} GPUs".format(n_gpus))
 
 
+#injection file setup stuff
 
+from pycbc.detector import Detector
+from GWSamplegen.waveform_utils import t_at_f
 
+all_detectors = {'H1': Detector('H1'), 'L1': Detector('L1'), 'V1': Detector('V1'), 'K1': Detector('K1')}
 
+if injfile is not None:
+	print("using injection file", injfile)
+	f = h5py.File(injfile, 'r')
+	mask = (f['injections']['gps_time'][:] > valid_times[0]) & (f['injections']['gps_time'][:] < valid_times[-1] + duration)
+	n_injs = np.sum(mask)
+
+	gps = f['injections']['gps_time'][mask]
+	mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask])
+	mass2 = f['injections']['mass2_source'][mask] * (1 + f['injections']['redshift'][mask])
+	spin1x = f['injections']['spin1x'][mask]
+	spin1y = f['injections']['spin1y'][mask]
+	spin1z = f['injections']['spin1z'][mask]
+	spin2x = f['injections']['spin2x'][mask]
+	spin2y = f['injections']['spin2y'][mask]
+	spin2z = f['injections']['spin2z'][mask]
+	distance = f['injections']['distance'][mask]
+	inclination = f['injections']['inclination'][mask]
+	polarization = f['injections']['polarization'][mask]
+	right_ascension = f['injections']['right_ascension'][mask]
+	declination = f['injections']['declination'][mask]
+	optimal_snr_h = f['injections']['optimal_snr_h'][mask]
+	optimal_snr_l = f['injections']['optimal_snr_l'][mask]
+
+	startgps = []
+	for i in range(n_injs):
+		startgps.append(np.floor(gps[i] - t_at_f(mass1[i], mass2[i], f_lower)))
+
+	startgps = np.array(startgps)
+
+	lgps = gps + all_detectors['L1'].time_delay_from_detector(all_detectors['H1'], 
+												right_ascension, 
+												declination, 
+												gps)
+
+	gps_dict = {'H1': gps, 'L1': lgps}
 
 
 
@@ -152,9 +195,9 @@ callback_q = Queue()
 
 
 #MAKING JOB SMALLER
-templates = templates[:n_jobs*30*10+605]
+#templates = templates[:n_jobs*30*5]
 #templates = templates[:1487]
-#templates = templates[:]
+templates = templates[:]
 
 total_templates = len(templates)
 
@@ -198,8 +241,8 @@ n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
 #n_noise_segments = 50
-n_noise_segments = 30
-
+n_noise_segments = 5
+print("total noise segments:", n_noise_segments)
 
 window_size = 2048
 sample_rate = 2048
@@ -224,7 +267,9 @@ json_dict = {
 	"inference_rate": sample_rate//stride,
 	"n_noise_segments": n_noise_segments,
 	"n_batches": n_batches,
+	"injection_file": 1 if injfile else 0,
 }
+
 
 import json
 with open(os.path.join(myfolder, "args.json"), "w") as f:
@@ -290,7 +335,7 @@ for i in range(n_batches):
 	template_conj = np.conjugate(t_templates)
 	#template_norm = np_sigmasq(t_templates, psds[ifos[0]], N, kmin, kmax, delta_f)
 
-	preds = {"H1": [], "L1": []}
+	#preds = {"H1": [], "L1": []}
 
 	for j in range(n_noise_segments):
 		n_windows = (slice_duration*sample_rate - window_size)//stride +1
@@ -301,6 +346,35 @@ for i in range(n_batches):
 		print("noise segment", j)
 		noise = next(noise_gen)
 		noise_time += time.time() - start
+
+		if injfile is not None:
+			for k in range(n_injs):
+				if startgps[k] > valid_times[j] and gps[k] + 1 < valid_times[j] + end_cutoff:
+					print("inserting injection {}".format(k))
+					#print(k) 
+					#insert into the loaded noise
+
+					hp, hc = get_td_waveform(mass1 = mass1[k], mass2 = mass2[k], 
+								spin1x = spin1x[k], spin1y = spin1y[k],
+								spin2x = spin2x[k], spin2y = spin2y[k],
+								spin1z = spin1z[k], spin2z = spin2z[k],
+								inclination = inclination[k], distance = distance[k],
+											delta_t = delta_t, f_lower = f_lower, approximant = 'SpinTaylorT4')
+
+					for ifo in ifos:
+						f_plus, f_cross = all_detectors[ifo].antenna_pattern(
+							right_ascension=right_ascension[k], declination=declination[k],
+							polarization=polarization[k],
+							t_gps=gps_dict[ifo][k])
+						
+						detector_signal = f_plus * hp + f_cross * hc
+
+						end_idx = int((gps_dict[ifo][k]-valid_times[j]) * 2048)
+						#print(end_idx, end_idx - len(detector_signal))
+						#print("inj stats:", mass1[k], mass2[k], spin1z[k], spin2z[k], inclination[k], distance[k])
+
+						#TODO: remove multiplier on detector signal once finished testing !
+						noise[ifos.index(ifo),end_idx - len(detector_signal):end_idx] += detector_signal *10
 		
 		for ifo in range(len(ifos)):
 			
@@ -403,7 +477,7 @@ for i in range(n_batches):
 		if old_job_id == n_jobs/n_workers - 1 and i == n_batches - 1 and worker_id == 0:
 			#if worker_id == 0:
 			#if there are an odd number of templates, worker 1 processes 1 less. so worker 0 needs to reduce the number of batches it waits for.
-			overflow = 2*(n_templates/(n_templates - total_lastjob%2) -1)  
+			overflow = 4*(n_templates/(n_templates - total_lastjob%2) -1)  
 			reqbatches -= int(np.ceil(tritonbatches * overflow))
 			print("removing {} required batches from worker 0".format(int(tritonbatches * overflow)))
 			#if i >= int(np.ceil(last_job_templates/templates_per_batch)):
@@ -492,7 +566,7 @@ for i in range(n_batches):
 
 		start = time.time()
 		#newshape
-		#should have shape (n_templates, n_windows, 4). TODO: handle arbitrary prediction length, not just 2 per det
+		#should have shape (n_templates, n_windows, 4)
 		if n_gpus == 1:
 			predbuf = np.empty((newshape[1], det_output_shape), dtype=np.float32)
 		else:
@@ -538,7 +612,7 @@ for i in range(n_batches):
 		timeslide_time += time.time() - start
 		
 
-		del all_responses
+		del all_responses, nonwindowed_SNR
 
 		gc.collect()
 

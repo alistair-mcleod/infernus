@@ -35,6 +35,7 @@ be used.
 """
 
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import json
 import argparse
 import time
@@ -50,6 +51,7 @@ from model_utils import split_models, new_split_models
 tf_model='/fred/oz016/alistair/BNS_models/real_glitch_metamodel/log_auc11.h5'
 double_det, combiner = new_split_models(tf_model)
 
+np.random.seed(1234)
 
 
 
@@ -85,13 +87,14 @@ if __name__ == "__main__":
     parser.add_argument('--workerid', type=int, default=0)
     parser.add_argument('--totalworkers', type=int, default=1)
     parser.add_argument('--totaljobs', type=int, default=1)
+    parser.add_argument('--savedir', type=str, default="/fred/oz016/alistair/infernus/timeslides/")
     args = parser.parse_args()
 
     job_id = args.jobindex #job id in job array
     worker_id = args.workerid #worker number of a server
     n_workers = args.totalworkers
     n_jobs = args.totaljobs
-    
+    savedir = args.savedir
     
     
     num_time_slides = 100
@@ -105,6 +108,7 @@ if __name__ == "__main__":
 
     print("JOBFS", os.environ["JOBFS"] )
 
+    statusfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "completed") #this folder is used to shut down the triton server
     myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
     os.chdir(myfolder)
     print("my folder is", myfolder)
@@ -126,6 +130,7 @@ if __name__ == "__main__":
     template_start = args["template_start"]
     batch = 0  # template batch count
     segment = 0  # noise segment count
+    
 
     #max windowed_start_end_indexes =  1843200
     #windowed_sample_end_indexes = list(range(sample_rate-1, sample_rate*duration, sample_rate//args["inference_rate"]))
@@ -161,6 +166,9 @@ if __name__ == "__main__":
             num_trigs = 1
         )
 
+        #zerolags = np.array(zerolags)
+        #zerolags[:,5] += template_start
+        
         if len(zerolags) < num_time_slides - 1: #TODO: check if we need the -1
             print("Not enough zerolags for this batch. Skipping.")
             os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
@@ -353,10 +361,11 @@ if __name__ == "__main__":
             #print("secondary centrals for this zerolag:", sorted(secondary_centrals))
 
         #save the zerolags to disk
-        print("saving to zerolag file: /fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
+        print("saving to zerolag file: zerolags_{}-{}_batch_{}_segment_{}.npy".\
                 format(template_start, template_start + n_templates, batch, segment))
-        np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment), zerolags)
+        
+        np.save(os.path.join(savedir, "zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment)), zerolags)
 
         print("pre predictions took {} seconds".format(time.time() - prestart))
         print("window time", window_time)
@@ -476,24 +485,18 @@ if __name__ == "__main__":
                 #print("new stat for ZL {} TS {} is {}".format(key_i, idx_j, new_stat))
                 
             true_idx += 1
-
-            stats.append(temp_stats)
-
         
         print("post predictions took {} seconds".format(time.time() - poststart))
 
-        #combopreds = np.array(combopreds)
-#         np.save("/fred/oz016/alistair/infernus/timeslides/combopreds_templates_{}-{}_batch_{}_segment_{}.npy".\
-#              format(template_start, template_start + n_templates, batch, segment), save_arr)
-        #np.save("/fred/oz016/alistair/infernus/timeslides/zerolags_{}-{}_batch_{}_segment_{}.npy".\
-        #        format(template_start, template_start + n_templates, batch, segment), zerolags)
-        np.save("/fred/oz016/alistair/infernus/timeslides/stats_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment), stats)
+        np.save(os.path.join(savedir, "stats_{}-{}_batch_{}_segment_{}.npy".\
+                        format(template_start, template_start + n_templates, batch, segment)), stats)
 
         os.remove('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
         os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))
 
-        
+        time.sleep(1)
+        del SNR, stats, zerolags
+        gc.collect()
 
         if batch == args['n_batches'] - 1 and segment == args['n_noise_segments'] - 1:
             print("main job should have finished")
@@ -526,3 +529,6 @@ if __name__ == "__main__":
 
     # save the best zerolags to a file
 
+#write a file to the status folder to indicate that this job is done
+with open(os.path.join(statusfolder, "worker_{}.txt".format(worker_id)), "w") as f:
+	f.write("done")

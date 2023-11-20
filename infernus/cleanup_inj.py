@@ -232,7 +232,7 @@ if __name__ == "__main__":
         windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
         start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
 
-        print(start_end_indexes[:10])
+        #print(start_end_indexes[:10])
         for key_i, i in enumerate(zerolags):
             # Check this zerolag is valid
             if i[0][0] == -1:
@@ -250,10 +250,10 @@ if __name__ == "__main__":
             primary_det_pos = i[0][3+primary_det]
 
             
-            primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
-            primary_det_8hz_samples = get_windows(start_end_indexes[::2], primary_det_pos, stride = 256)
-            primary_det_4hz_samples = get_windows(start_end_indexes[::4], primary_det_pos, stride = 512)
-            primary_det_2hz_samples = get_windows(start_end_indexes[::8], primary_det_pos, stride = 1024)
+            primary_det_samples = np.array(get_windows(start_end_indexes, primary_det_pos))
+            primary_det_8hz_samples = np.array(get_windows(start_end_indexes[::2], primary_det_pos, stride = 256)) *2
+            primary_det_4hz_samples = np.array(get_windows(start_end_indexes[::4], primary_det_pos, stride = 512)) *4
+            primary_det_2hz_samples = np.array(get_windows(start_end_indexes[::8], primary_det_pos, stride = 1024)) *8
 
             window_time += time.time() - s
             #add +2 to args[inference rate]
@@ -262,25 +262,31 @@ if __name__ == "__main__":
                 print(i)
                 zerolags[key_i][0][0] = -1
                 continue
-            if len(primary_det_2hz_samples) < 4 or primary_det_2hz_samples[0] < 0 or primary_det_2hz_samples[-1] >= len(start_end_indexes[::8]):
+            if len(primary_det_2hz_samples) < 4 or primary_det_2hz_samples[0] < 0 or primary_det_2hz_samples[-1] >= len(start_end_indexes):
                 print("looks like it messed up on the 2 Hz sample")
                 print(i)
                 zerolags[key_i][0][0] = -1
                 continue
+
+            if primary_det_8hz_samples[-1] >= len(start_end_indexes):
+                print("8 Hz samples out of range")
+            
+            if primary_det_4hz_samples[-1] >= len(start_end_indexes):
+                print("4 Hz samples out of range")
                 
             s = time.time()
             # Load predictions of primary detector
-            primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
-            primary_8hz = preds[primary_det][int(i[0][5]), primary_det_8hz_samples[0]:primary_det_8hz_samples[-1]+1]
-            primary_4hz = preds[primary_det][int(i[0][5]), primary_det_4hz_samples[0]:primary_det_4hz_samples[-1]+1]
-            primary_2hz = preds[primary_det][int(i[0][5]), primary_det_2hz_samples[0]:primary_det_2hz_samples[-1]+1]
+            primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples]
+            primary_8hz = preds[primary_det][int(i[0][5]), primary_det_8hz_samples]
+            primary_4hz = preds[primary_det][int(i[0][5]), primary_det_4hz_samples]
+            primary_2hz = preds[primary_det][int(i[0][5]), primary_det_2hz_samples]
 
             secondary_det = (1 + primary_det) %2
 
-            secondary_preds = preds[secondary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
-            secondary_8hz = preds[secondary_det][int(i[0][5]), primary_det_8hz_samples[0]:primary_det_8hz_samples[-1]+1]
-            secondary_4hz = preds[secondary_det][int(i[0][5]), primary_det_4hz_samples[0]:primary_det_4hz_samples[-1]+1]
-            secondary_2hz = preds[secondary_det][int(i[0][5]), primary_det_2hz_samples[0]:primary_det_2hz_samples[-1]+1]
+            secondary_preds = preds[secondary_det][int(i[0][5]), primary_det_samples]
+            secondary_8hz = preds[secondary_det][int(i[0][5]), primary_det_8hz_samples]
+            secondary_4hz = preds[secondary_det][int(i[0][5]), primary_det_4hz_samples]
+            secondary_2hz = preds[secondary_det][int(i[0][5]), primary_det_2hz_samples]
 
 
             t = time.time()

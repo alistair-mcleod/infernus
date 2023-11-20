@@ -13,6 +13,10 @@ args = parser.parse_args()
 timeslides_dir = args.savedir
 injfile = args.injfile # only used to check if we're doing injections, not actually used.
 
+if injfile == "None":
+	injfile = None
+	print("No injfile! must be a BG run")
+
 print("timeslides_dir is {}".format(timeslides_dir))
 
 def align_stats(zl, stats):
@@ -49,7 +53,8 @@ def merge_zerolags(zl, new_zl, stats = None, new_stats = None):
 		if new_zl[i][0][0] == -1:
 			continue
 
-
+		#TODO: investigate different criteria for merging zls. 
+		#index 2 is the highest SNR, but in the future we might want to use the highest network pred.
 		if zl[i][0][2] < new_zl[i][0][2]:
 			zl[i] = new_zl[i]
 			if stats is not None:
@@ -72,7 +77,7 @@ segment_dict = {}
 
 
 
-breaklimit = 240
+breaklimit = 100
 breakcount = 0
 
 while len(os.listdir(timeslides_dir)) == 0:
@@ -179,8 +184,9 @@ for key in segment_dict.keys():
 		master_stats = np.concatenate((master_stats, segment_dict[key][1]), axis = 0)
 
 
-#np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), master_zerolag)
-np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), segment_dict)
+#if injfile is None:
+np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), master_zerolag)
+#np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), segment_dict)
 
 
 if injfile is None:

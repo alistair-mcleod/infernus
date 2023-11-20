@@ -60,11 +60,13 @@ def get_windows(start_end_indexes, peak_pos, pad=True, stride = 128):
     #print(peak_pos)
     #print(start_end_indexes[max(peak_pos//128-100,0)])
     #print(start_end_indexes[min(peak_pos//128+100, len(start_end_indexes))])
-    peak_idx = peak_pos//stride #the index of the peak pos
-    buf = 2*sample_rate//stride #a range of windows to search around
+    peak_idx = int(peak_pos//stride) #the index of the peak pos
+    buf = int(2*sample_rate//stride) #a range of windows to search around
+    #print(int(max(peak_idx - buf,0)))
+    #print(int(min(peak_idx + buf, len(start_end_indexes))))
     for key,val in enumerate(start_end_indexes[max(peak_idx - buf,0):min(peak_idx + buf, len(start_end_indexes))]):
         if val[0] <= peak_pos <= val[1]:
-            windows.append(key+max(peak_idx-buf,0))
+            windows.append(key+int(max(peak_idx-buf,0)))
 
     #TODO: check if this is correct behaviour
     if len(windows) == 0:
@@ -166,8 +168,8 @@ if __name__ == "__main__":
             num_trigs = 1
         )
 
-        #zerolags = np.array(zerolags)
-        #zerolags[:,5] += template_start
+        zerolags = np.array(zerolags)
+        zerolags = np.concatenate((zerolags, np.zeros((zerolags.shape[0], zerolags.shape[1], 8)) - 1), axis = -1)
         
         if len(zerolags) < num_time_slides - 1: #TODO: check if we need the -1
             print("Not enough zerolags for this batch. Skipping.")
@@ -248,10 +250,10 @@ if __name__ == "__main__":
             primary_det_pos = i[0][3+primary_det]
 
             
-            primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
-            primary_det_8hz_samples = get_windows(start_end_indexes[::2], primary_det_pos, stride = 256)
-            primary_det_4hz_samples = get_windows(start_end_indexes[::4], primary_det_pos, stride = 512)
-            primary_det_2hz_samples = get_windows(start_end_indexes[::8], primary_det_pos, stride = 1024)
+            primary_det_samples = np.array(get_windows(start_end_indexes, primary_det_pos))
+            primary_det_8hz_samples = np.array(get_windows(start_end_indexes[::2], primary_det_pos, stride = 256)) *2
+            primary_det_4hz_samples = np.array(get_windows(start_end_indexes[::4], primary_det_pos, stride = 512)) *4
+            primary_det_2hz_samples = np.array(get_windows(start_end_indexes[::8], primary_det_pos, stride = 1024)) *8
 
             window_time += time.time() - s
             #add +2 to args[inference rate]
@@ -260,18 +262,24 @@ if __name__ == "__main__":
                 print(i)
                 zerolags[key_i][0][0] = -1
                 continue
-            if len(primary_det_2hz_samples) < 4 or primary_det_2hz_samples[0] < 0 or primary_det_2hz_samples[-1] >= len(start_end_indexes[::8]):
+            if len(primary_det_2hz_samples) < 4 or primary_det_2hz_samples[0] < 0 or primary_det_2hz_samples[-1] >= len(start_end_indexes):
                 print("looks like it messed up on the 2 Hz sample")
                 print(i)
                 zerolags[key_i][0][0] = -1
                 continue
+
+            if primary_det_8hz_samples[-1] >= len(start_end_indexes):
+                print("8 Hz samples out of range")
+            
+            if primary_det_4hz_samples[-1] >= len(start_end_indexes):
+                print("4 Hz samples out of range")
                 
             s = time.time()
             # Load predictions of primary detector
-            primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples[0]:primary_det_samples[-1]+1]
-            primary_8hz = preds[primary_det][int(i[0][5]), primary_det_8hz_samples[0]:primary_det_8hz_samples[-1]+1]
-            primary_4hz = preds[primary_det][int(i[0][5]), primary_det_4hz_samples[0]:primary_det_4hz_samples[-1]+1]
-            primary_2hz = preds[primary_det][int(i[0][5]), primary_det_2hz_samples[0]:primary_det_2hz_samples[-1]+1]
+            primary_preds = preds[primary_det][int(i[0][5]), primary_det_samples]
+            primary_8hz = preds[primary_det][int(i[0][5]), primary_det_8hz_samples]
+            primary_4hz = preds[primary_det][int(i[0][5]), primary_det_4hz_samples]
+            primary_2hz = preds[primary_det][int(i[0][5]), primary_det_2hz_samples]
 
             # Get central positions for secondary samples
             secondary_centrals = []
@@ -306,10 +314,10 @@ if __name__ == "__main__":
                 t = time.time()
                 peak_pos = j - light_travel_time + np.argmax(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
 
-                secondary_det_samples = get_windows(start_end_indexes, peak_pos)
-                secondary_det_8hz_samples = get_windows(start_end_indexes[::2], peak_pos, stride = 256)
-                secondary_det_4hz_samples = get_windows(start_end_indexes[::4], peak_pos, stride = 512)
-                secondary_det_2hz_samples = get_windows(start_end_indexes[::8], peak_pos, stride = 1024)
+                secondary_det_samples = np.array(get_windows(start_end_indexes, peak_pos))
+                secondary_det_8hz_samples = np.array(get_windows(start_end_indexes[::2], peak_pos, stride = 256)) *2
+                secondary_det_4hz_samples = np.array(get_windows(start_end_indexes[::4], peak_pos, stride = 512)) *4
+                secondary_det_2hz_samples = np.array(get_windows(start_end_indexes[::8], peak_pos, stride = 1024)) *8
 
                 if len(secondary_det_samples) == 0:
                     print("Red alert! a secondary detector has no windows. Hopefully setting the zerolag to -1 fixes it.")
@@ -319,10 +327,10 @@ if __name__ == "__main__":
                 argwindows += time.time() - t
                 # Load predictions of secondary detector
                 t = time.time()
-                secondary_preds = preds[secondary_det][int(i[0][5]), secondary_det_samples[0]:secondary_det_samples[-1]+1]
-                secondary_8hz = preds[secondary_det][int(i[0][5]), secondary_det_8hz_samples[0]:secondary_det_8hz_samples[-1]+1]
-                secondary_4hz = preds[secondary_det][int(i[0][5]), secondary_det_4hz_samples[0]:secondary_det_4hz_samples[-1]+1]
-                secondary_2hz = preds[secondary_det][int(i[0][5]), secondary_det_2hz_samples[0]:secondary_det_2hz_samples[-1]+1]
+                secondary_preds = preds[secondary_det][int(i[0][5]), secondary_det_samples]
+                secondary_8hz = preds[secondary_det][int(i[0][5]), secondary_det_8hz_samples]
+                secondary_4hz = preds[secondary_det][int(i[0][5]), secondary_det_4hz_samples]
+                secondary_2hz = preds[secondary_det][int(i[0][5]), secondary_det_2hz_samples]
 
 
                 if len(secondary_preds) < 18:
@@ -360,12 +368,6 @@ if __name__ == "__main__":
             secondary_centrals_list.append(sorted(secondary_centrals))
             #print("secondary centrals for this zerolag:", sorted(secondary_centrals))
 
-        #save the zerolags to disk
-        print("saving to zerolag file: zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment))
-        
-        np.save(os.path.join(savedir, "zerolags_{}-{}_batch_{}_segment_{}.npy".\
-                format(template_start, template_start + n_templates, batch, segment)), zerolags)
 
         print("pre predictions took {} seconds".format(time.time() - prestart))
         print("window time", window_time)
@@ -478,15 +480,37 @@ if __name__ == "__main__":
                 #for each Hz, we have MA and max pred 
                 #max pred for each is easy to get, it's just max(combined_xhz[true_idx][idx_j][1:-1])
                 # Need individual detector SNRs so they can be combined and filtered properly with new batches of templates on the same noise data
-                new_stat = [-1, -1, np.sqrt((i[0][primary_dets[true_idx]])**2 + peak**2).astype(np.float32), ma_prediction_16hz, ma_prediction_8hz, ma_prediction_4hz, ma_prediction_2hz]
+                new_stat = [-1, -1, np.sqrt((i[0][primary_dets[true_idx]])**2 + peak**2).astype(np.float32), 
+                            ma_prediction_16hz, ma_prediction_8hz, ma_prediction_4hz, ma_prediction_2hz,
+                            np.max(combined_preds[true_idx][0][:start]), np.max(combined_8hz[true_idx][0][:start]),
+                            np.max(combined_4hz[true_idx][0][:start]), np.max(combined_2hz[true_idx][0][:start])]
+                
                 new_stat[primary_dets[true_idx]] = i[0][primary_dets[true_idx]]
                 new_stat[secondary_dets[true_idx]] = peak
                 temp_stats.append(new_stat)
                 #print("new stat for ZL {} TS {} is {}".format(key_i, idx_j, new_stat))
                 
             true_idx += 1
+
+            stats.append(temp_stats)
         
         print("post predictions took {} seconds".format(time.time() - poststart))
+
+        #adjust template IDs to global template IDs
+        zerolags[:,0,5] += template_start
+
+        print("zl_shape:", zerolags.shape)
+
+        stats = np.array(stats)
+
+        print("stats shape:", stats.shape)
+
+        #save the zerolags to disk
+        print("saving to zerolag file: zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment))
+        
+        np.save(os.path.join(savedir, "zerolags_{}-{}_batch_{}_segment_{}.npy".\
+                format(template_start, template_start + n_templates, batch, segment)), zerolags)
 
         np.save(os.path.join(savedir, "stats_{}-{}_batch_{}_segment_{}.npy".\
                         format(template_start, template_start + n_templates, batch, segment)), stats)

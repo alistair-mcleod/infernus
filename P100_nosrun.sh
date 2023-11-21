@@ -1,12 +1,11 @@
 #! /bin/bash
-##SBATCH --job-name=doubletest2
 #SBATCH --output=triton_logs/%x_%a.log
 #SBATCH --nodes=1
 #SBATCH --ntasks=6
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=90gb
 #SBATCH --gres=gpu:2
-#SBATCH --time=40:00:00
+#SBATCH --time=20:00:00
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
@@ -35,12 +34,12 @@ CUDA_VISIBLE_DEVS=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader | wc -
 #TODO: figure out why some of the jobs crash. for now I'm just sleeping between commands to see if that helps
 sleep 1
 
-srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver.sh $port > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log &
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver.sh $port > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log 2>&1 &
 
 sleep 1
 #export CUDA_VISIBLE_DEVICES=1
 sleep 1
-srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver2.sh $port2 > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_2.log &
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver2.sh $port2 > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_2.log 2>&1 &
 
 
 sleep 10
@@ -52,6 +51,8 @@ savedir=$1
 echo $savedir
 injfile=$2
 echo $injfile
+noisedir=$3
+echo $noisedir
 
 #start the workers
 
@@ -63,18 +64,18 @@ do
     #make the corresponding jobfs folder
     mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
     echo $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
-	python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS --injfile=$injfile > triton_logs/worker_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log &
+	python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS --injfile=$injfile --noisedir=$noisedir > triton_logs/worker_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
     sleep 1
 
     #check if injfile is none
 
     if [ $injfile != "None" ]; then
         echo "injfile is not none, starting injfile worker"
-        python infernus/cleanup_inj.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_inj_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log &
+        python infernus/cleanup_inj.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_inj_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
 
     else
         echo "injfile is none, not starting injfile worker"
-        python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log &
+        python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
     fi
 
     

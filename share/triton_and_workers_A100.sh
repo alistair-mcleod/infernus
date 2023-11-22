@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=70gb
 #SBATCH --gres=gpu:1
-#SBATCH --time=22:00:00
+#SBATCH --time=30:00:00
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
@@ -38,8 +38,7 @@ sleep 1
 #sleep 10
 n_workers=2
 totaljobs=$SLURM_ARRAY_TASK_COUNT
-#totaljobs=100
-#savedir="/fred/oz016/alistair/infernus/timeslides"
+
 savedir=$1
 echo $savedir
 injfile=$2

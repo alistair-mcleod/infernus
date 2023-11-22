@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=90gb
 #SBATCH --gres=gpu:2
-#SBATCH --time=2:00:00
+#SBATCH --time=40:00:00
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
@@ -32,14 +32,17 @@ CUDA_VISIBLE_DEVS=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader | wc -
 
 #export CUDA_VISIBLE_DEVICES=0
 
-#TODO: figure out why some of the jobs crash. for now I'm just sleeping between commands to see if that helps
-sleep 1
+#TODO: figure out why some of the jobs crash when running triton servers without srun.
+#to check if one or more of the servers has crashed: 
+#tail triton_logs/<serverlog> | grep cudaError
+
+#sleep 1
 
 srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver.sh $port > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log 2>&1 &
 
 sleep 1
 #export CUDA_VISIBLE_DEVICES=1
-sleep 1
+#sleep 1
 srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver2.sh $port2 > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_2.log 2>&1 &
 
 
@@ -47,7 +50,6 @@ sleep 10
 n_workers=2
 totaljobs=$SLURM_ARRAY_TASK_COUNT
 
-#savedir="/fred/oz016/alistair/nt_310/infernus/timeslides_P100"
 savedir=$1
 echo $savedir
 injfile=$2

@@ -10,6 +10,9 @@
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
+#########################################################
+#NOTE: this script is in the process of being deprecated#
+#########################################################
 
 #get slurm job ID
 jobid=$SLURM_ARRAY_JOB_ID

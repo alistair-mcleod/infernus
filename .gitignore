@@ -7,9 +7,8 @@ notebooks/
 *.onnx
 infernus/serving/*/*
 **.npy
-./*.sh 
 
-#!./share/*.sh
+/*.sh 
 
 # Serving dummy folder test files
 !./infernus/serving/dummy/*.ipynb

@@ -1,11 +1,11 @@
 #! /bin/bash
 #SBATCH --output=triton_logs/%x_%a.log
 #SBATCH --nodes=1
-#SBATCH --ntasks=5
+#SBATCH --ntasks=4
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=70gb
-#SBATCH --gres=gpu:1
-#SBATCH --time=22:00:00
+#SBATCH --mem=90gb
+#SBATCH --gres=gpu:2
+#SBATCH --time=2:00:00
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
@@ -16,39 +16,44 @@ jobid=$SLURM_ARRAY_JOB_ID
 
 ml gcc/11.3.0 openmpi/4.1.4 python/3.10.4 cudnn/8.4.1.50-cuda-11.7.0
 ml apptainer
-#source /fred/oz016/damon/envs/nt_310/bin/activate
+
+#source into a virtual environment with the correct packages
 source /fred/oz016/alistair/nt_310/bin/activate
 
 node=$SLURM_JOB_NODELIST
 echo $node
 
-#set a port based on the array ID. needs to step by 3 because each triton server needs 3 ports
+#set a port based on the array ID. needs to step by 6 because each triton server needs 3 ports
 port=$((20100 + $SLURM_ARRAY_TASK_ID * 6))
 port2=$((port+3))
 
 
 CUDA_VISIBLE_DEVS=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader | wc -l)
 
-#count number of allocated GPUs. this code should always select 1 GPU 
-echo "single GPU allocated"
-./infernus/serving/dummy/run_tritonserver.sh $port > triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log 2>&1 &
+#export CUDA_VISIBLE_DEVICES=0
 
-
+#TODO: figure out why some of the jobs crash. for now I'm just sleeping between commands to see if that helps
 sleep 1
 
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver.sh $port > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log 2>&1 &
 
-#sleep 10
+sleep 1
+#export CUDA_VISIBLE_DEVICES=1
+sleep 1
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver2.sh $port2 > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_2.log 2>&1 &
+
+
+sleep 10
 n_workers=2
 totaljobs=$SLURM_ARRAY_TASK_COUNT
-#totaljobs=100
-#savedir="/fred/oz016/alistair/infernus/timeslides"
+
+#savedir="/fred/oz016/alistair/nt_310/infernus/timeslides_P100"
 savedir=$1
 echo $savedir
 injfile=$2
 echo $injfile
 noisedir=$3
 echo $noisedir
-
 
 mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/completed
 #start the workers
@@ -77,10 +82,6 @@ do
     #os.environ["JOBFS"] 
 done
 
-#if [ $SLURM_ARRAY_TASK_ID -eq 0 ]; then
-#    echo "starting megacleanup because I'm job 0"
-#    python infernus/megacleanup.py > triton_logs/megacleanup.log &
-#fi
 
 while true
 do

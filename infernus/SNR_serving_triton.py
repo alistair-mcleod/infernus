@@ -23,11 +23,54 @@ from SNR_utils import make_windows_2d
 from model_utils import onnx_callback
 start = time.time()
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--jobindex', type=int)
+parser.add_argument('--workerid', type=int, default=0)
+parser.add_argument('--totalworkers', type=int, default=1)
+parser.add_argument('--totaljobs', type=int, default=1)
+parser.add_argument('--node', type=str, default="john108")
+parser.add_argument('--port', type=int, default=8001)
+parser.add_argument('--ngpus', type=int, default=1)
+parser.add_argument('--injfile', type=str, default=None)
+parser.add_argument('--noisedir', type=str, default=None)
+
+args = parser.parse_args()
+
+job_id = args.jobindex #job id in job array
+worker_id = args.workerid #worker number of a server
+n_workers = args.totalworkers
+n_jobs = args.totaljobs
+gpu_node = args.node
+grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
+n_gpus = args.ngpus
+injfile = args.injfile
+if injfile == "None":
+	injfile = None
+
+noise_dir = args.noisedir
+if noise_dir == "None":
+	#exit
+	print("no noise dir specified, breaking")
+	sys.exit(1)
+
+myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
+print("my folder is", myfolder)
+
+print("starting job {} of {}".format(job_id, n_jobs))
+old_job_id = job_id
+print("I am worker {} of {} for this server".format(worker_id, n_workers))
+job_id = worker_id + job_id*n_workers
+print("my unique index is {}".format(job_id))
+n_jobs = n_jobs * n_workers
+print("there are {} jobs in total".format(n_jobs))
+print("I am using {} GPUs".format(n_gpus))
+
+
 
 #REGULAR SNR SERIES STUFF
 
-
-noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
+print(noise_dir)
+#noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
 duration = 1024
 sample_rate = 2048
 delta_t = 1/sample_rate
@@ -67,44 +110,6 @@ hp, _ = get_td_waveform(mass1 = templates[0,1], mass2 = templates[0,2],
 
 max_waveform_length = len(hp)/sample_rate
 max_waveform_length = max(32, int(np.ceil(max_waveform_length/10)*10))
-
-
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--jobindex', type=int)
-parser.add_argument('--workerid', type=int, default=0)
-parser.add_argument('--totalworkers', type=int, default=1)
-parser.add_argument('--totaljobs', type=int, default=1)
-parser.add_argument('--node', type=str, default="john108")
-parser.add_argument('--port', type=int, default=8001)
-parser.add_argument('--ngpus', type=int, default=1)
-parser.add_argument('--injfile', type=str, default=None)
-
-args = parser.parse_args()
-
-job_id = args.jobindex #job id in job array
-worker_id = args.workerid #worker number of a server
-n_workers = args.totalworkers
-n_jobs = args.totaljobs
-gpu_node = args.node
-grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
-n_gpus = args.ngpus
-injfile = args.injfile
-if injfile == "None":
-	injfile = None
-
-myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
-print("my folder is", myfolder)
-
-print("starting job {} of {}".format(job_id, n_jobs))
-old_job_id = job_id
-print("I am worker {} of {} for this server".format(worker_id, n_workers))
-job_id = worker_id + job_id*n_workers
-print("my unique index is {}".format(job_id))
-n_jobs = n_jobs * n_workers
-print("there are {} jobs in total".format(n_jobs))
-print("I am using {} GPUs".format(n_gpus))
 
 
 #injection file setup stuff
@@ -240,8 +245,8 @@ print("batches per job:", n_batches)
 n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
-#n_noise_segments = 50
-n_noise_segments = 5
+#n_noise_segments = 100
+#n_noise_segments = 3
 print("total noise segments:", n_noise_segments)
 
 window_size = 2048
@@ -374,7 +379,7 @@ for i in range(n_batches):
 						#print("inj stats:", mass1[k], mass2[k], spin1z[k], spin2z[k], inclination[k], distance[k])
 
 						#TODO: remove multiplier on detector signal once finished testing !
-						noise[ifos.index(ifo),end_idx - len(detector_signal):end_idx] += detector_signal *10
+						noise[ifos.index(ifo),end_idx - len(detector_signal):end_idx] += detector_signal #*10
 		
 		for ifo in range(len(ifos)):
 			
@@ -400,7 +405,7 @@ for i in range(n_batches):
 		#print("windowed_SNR starts with", windowed_SNR[:, 0, 0, :10])
 
 		if j > 0 and (valid_times[j] - valid_times[j-1]) < slice_duration:
-			chop_time = int((valid_times[j] - valid_times[j-1]) * sample_rate)
+			chop_time = int((slice_duration - (valid_times[j] - valid_times[j-1])) * sample_rate)
 			print("chopping", chop_time/sample_rate, "seconds")
 
 			chop_index = int(((valid_times[j] - valid_times[j-1]) * sample_rate/stride))
@@ -566,7 +571,7 @@ for i in range(n_batches):
 
 		start = time.time()
 		#newshape
-		#should have shape (n_templates, n_windows, 4)
+		#should have shape (n_templates, n_windows, det_output_shape)
 		if n_gpus == 1:
 			predbuf = np.empty((newshape[1], det_output_shape), dtype=np.float32)
 		else:
@@ -601,11 +606,29 @@ for i in range(n_batches):
 		predbuf = predbuf.reshape(n_templates, -1, predbuf.shape[-1])
 		print("predbuf shape",predbuf.shape)
 		
-		
+		#if i == 0 and j == 0 and job_id == 0:
+		#	np.save(os.path.join("/fred/oz016/alistair/infernus","SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
+		#	np.save(os.path.join("/fred/oz016/alistair/infernus","preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
 
 		#save to my folder
-		np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
-		np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
+		while True:
+			try:
+				np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
+				break
+
+			except Exception as e:
+				print("Run out of disk space, waiting 10 seconds")
+				time.sleep(10)	
+
+		while True:
+			try:
+				np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
+				break
+
+			except Exception as e:
+				print("Run out of disk space, waiting 10 seconds")
+				time.sleep(10)
+
 
 		
 		

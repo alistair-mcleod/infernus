@@ -179,6 +179,7 @@ if injfile is None:
 for key in segment_dict.keys():
 	if key == "0":
 		continue
+	print("merging zerolags for segment {}".format(key))
 	master_zerolag = np.concatenate((master_zerolag, segment_dict[key][0]), axis = 0)
 	if injfile is None:
 		master_stats = np.concatenate((master_stats, segment_dict[key][1]), axis = 0)

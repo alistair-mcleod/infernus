@@ -8,6 +8,8 @@ notebooks/
 infernus/serving/*/*
 **.npy
 
+/*.sh 
+
 # Serving dummy folder test files
 !./infernus/serving/dummy/*.ipynb
 !./infernus/serving/dummy/model_repository/**.onnx

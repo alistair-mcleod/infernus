@@ -4,12 +4,15 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=5
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=75gb
+#SBATCH --mem=80gb
 #SBATCH --gres=gpu:1
-#SBATCH --time=6:00:00
+#SBATCH --time=20:00:00
 #SBATCH --tmp=50GB
-#SBATCH --array=0-9
+#SBATCH --array=0-89
 
+#########################################################
+#NOTE: this script is in the process of being deprecated#
+#########################################################
 
 #get slurm job ID
 jobid=$SLURM_ARRAY_JOB_ID
@@ -36,7 +39,7 @@ if [ $CUDA_VISIBLE_DEVS -gt 1 ]; then
     srun -n1 -c1 --exclusive --gpus=1 --mem=12gb --output=triton_logs/server%x_%a_2.log ./infernus/serving/dummy/run_tritonserver2.sh $port2 &
 else
     echo "single GPU allocated"
-    srun -n1 -c1 --exclusive --gpus=1 --mem=12gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
+    srun -n1 -c1 --exclusive --gpus=1 --mem=14gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
 fi
 
 sleep 10
@@ -47,7 +50,7 @@ n_workers=2
 
 #$SLURM_ARRAY_TASK_COUNT
 
-
+mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/completed
 #start the workers
 for i in $(seq 0 $((n_workers-1)))
 do
@@ -55,9 +58,9 @@ do
     #make the corresponding jobfs folder
     mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
     echo $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
-	srun -n1 -c1 --exclusive --gpus=0 --mem=27gb --output=triton_logs/worker_%x_%a_$i.log python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS &
+	srun -n1 -c1 --exclusive --gpus=0 --mem=28gb --output=triton_logs/worker_%x_%a_$i.log python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS &
     sleep 1
-    srun -n1 -c1 --exclusive --gpus=0 --mem=3gb --output=triton_logs/cleanup_%x_%a_$i.log python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT &
+    srun -n1 -c1 --exclusive --gpus=0 --mem=5gb --output=triton_logs/cleanup_%x_%a_$i.log python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$SLURM_ARRAY_TASK_COUNT &
     sleep 1
     #os.environ["JOBFS"] 
 done
@@ -71,11 +74,21 @@ echo job ID is $array_id
 while true
 do
     # Get the number of running tasks for this job
-    num_running=$(squeue -j $array_id -h -t R -s | wc -l)
+    #num_running=$(squeue -j $array_id -h -t R -s | wc -l)
+
+    #count the number of files in the jobfs folder
+    num_files=$(ls -1 $JOBFS/job_$SLURM_ARRAY_TASK_ID/completed | wc -l)
+    #echo $num_files
 
     # If only the server, extern and batch are running, exit the job
-    if [ $num_running -eq 3 ]; then
-        echo "Only one task (hopefully the server) is running. Exiting job."
+    #if [ $num_running -eq 3 ]; then
+    #    echo "Only one task (hopefully the server) is running. Exiting job."
+    #    scancel $array_id.0
+    #    exit
+    #fi
+
+    if [ $num_files -eq $n_workers ]; then
+        echo "All workers have finished. shutting down triton server"
         scancel $array_id.0
         exit
     fi
@@ -84,10 +97,13 @@ do
 #state=$(sacct -j $SLURM_JOB_ID.$i --format State | tail -1 | xargs)
 #if [[ $state == "COMPLETED" ]] || [[ $state == "FAILED" ]]
 
-#    # Wait for 60 seconds before checking again
-#    sleep 60
+#    # Wait for 10 seconds before checking again
+    sleep 10
 done
 
+echo "shut down triton server, waiting for cleanup jobs to finish"
+
+wait
 echo "All tasks are closed. Exiting job."
 #while true
 #do

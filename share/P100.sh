@@ -1,14 +1,18 @@
 #! /bin/bash
-#SBATCH --job-name=triton_P100_timeslides
+#SBATCH --job-name=triton_P100_large
 #SBATCH --output=triton_logs/%x_%a.log
 #SBATCH --nodes=1
 #SBATCH --ntasks=6
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=90gb
+#SBATCH --mem=100gb
 #SBATCH --gres=gpu:2
-#SBATCH --time=2:00:00
+#SBATCH --time=10:00:00
 #SBATCH --tmp=50GB
-#SBATCH --array=0-1
+#SBATCH --array=0-49
+
+#########################################################
+#NOTE: this script is in the process of being deprecated#
+#########################################################
 
 
 #get slurm job ID
@@ -30,8 +34,8 @@ port2=$((port+3))
 CUDA_VISIBLE_DEVS=$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader | wc -l)
 
 
-srun -n1 -c1 --exclusive --gpus=1 --mem=10gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
-srun -n1 -c1 --exclusive --gpus=1 --mem=10gb --output=triton_logs/server%x_%a_2.log ./infernus/serving/dummy/run_tritonserver2.sh $port2 &
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb --output=triton_logs/server%x_%a.log ./infernus/serving/dummy/run_tritonserver.sh $port &
+srun -n1 -c1 --exclusive --gpus=1 --mem=15gb --output=triton_logs/server%x_%a_2.log ./infernus/serving/dummy/run_tritonserver2.sh $port2 &
 
 
 #sleep 10

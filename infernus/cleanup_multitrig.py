@@ -101,22 +101,27 @@ if __name__ == "__main__":
     parser.add_argument('--workerid', type=int, default=0)
     parser.add_argument('--totalworkers', type=int, default=1)
     parser.add_argument('--totaljobs', type=int, default=1)
-    parser.add_argument('--savedir', type=str, default="/fred/oz016/alistair/infernus/timeslides/")
-    parser.add_argument('--ntimeslides', type=int, default=100)
+    #parser.add_argument('--savedir', type=str, default="/fred/oz016/alistair/infernus/timeslides/")
+    #parser.add_argument('--ntimeslides', type=int, default=100)
     parser.add_argument('--cleanupid', type=int, default=0)
     parser.add_argument('--totalcleanups', type=int, default=1)
-
+    parser.add_argument('--argsfile', type=str, default='args.json')
     cmdargs = parser.parse_args()
 
     job_id = cmdargs.jobindex #job id in job array
     worker_id = cmdargs.workerid #worker number of a server
     n_workers = cmdargs.totalworkers
     n_jobs = cmdargs.totaljobs
-    savedir = cmdargs.savedir
-    num_time_slides = cmdargs.ntimeslides
-    print("num_time_slides is", num_time_slides)
+    #savedir = cmdargs.savedir
+    #num_time_slides = cmdargs.ntimeslides
+    #print("num_time_slides is", num_time_slides)
     cleanup_id = cmdargs.cleanupid
     n_cleanups = cmdargs.totalcleanups
+
+    args = json.load(open(cmdargs.argsfile, "r"))
+    savedir = args["save_dir"]
+    num_time_slides = args["n_timeslides"]
+    print("num_time_slides is", num_time_slides)
 
     print("cleanup ID is {} and there are {} cleanups".format(cleanup_id, n_cleanups))
     
@@ -126,8 +131,7 @@ if __name__ == "__main__":
     sample_rate = 2048
     duration = 900
     light_travel_time = sample_rate//100  #max light travel time between H and L. In units of datapoints, not ms
-    
-    
+
 
     print("JOBFS", os.environ["JOBFS"] )
 
@@ -165,6 +169,12 @@ if __name__ == "__main__":
     
     else:
         print("switching to background run mode")    
+
+    #convolution kernels for moving average
+    f16 = np.ones(args["inference_rate"])/args["inference_rate"]
+    f8 = np.ones(args["inference_rate"]//2)/(args["inference_rate"]//2)
+    f4 = np.ones(args["inference_rate"]//4)/(args["inference_rate"]//4)
+    f2 = np.ones(args["inference_rate"]//8)/(args["inference_rate"]//8)
 
 
     while True:
@@ -531,6 +541,8 @@ if __name__ == "__main__":
         meantime = 0
         stattime = 0
 
+        
+
         for key_i, i in enumerate(zerolags):
             if i[0][0] == -1:
                 #print(f"Zerolag {key_i} is invalid")
@@ -550,18 +562,8 @@ if __name__ == "__main__":
                     peak = np.max(SNR[secondary_dets[true_idx], int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
                     #print("peak for ZL {}, TS {} is {}".format(key_i, idx_j, peak))
                     # COMPUTE MOVING AVERAGE PREDICTIONS
-                    ma_prediction_2hz = []
-                    ma_prediction_4hz = []
-                    ma_prediction_8hz = []
-                    ma_prediction_16hz = []
-
 
                     s = time.time()
-
-                    f16 = np.ones(args["inference_rate"])/args["inference_rate"]
-                    f8 = np.ones(args["inference_rate"]//2)/(args["inference_rate"]//2)
-                    f4 = np.ones(args["inference_rate"]//4)/(args["inference_rate"]//4)
-                    f2 = np.ones(args["inference_rate"]//8)/(args["inference_rate"]//8)
                     
                     ma_prediction_16hz = np.max(np.convolve(combined_preds[true_idx][idx_j], f16, mode = 'valid'))
                     ma_prediction_8hz = np.max(np.convolve(combined_8hz[true_idx][idx_j], f8, mode = 'valid'))
@@ -695,7 +697,10 @@ if __name__ == "__main__":
         #os.remove('preds_batch_{}_segment_{}.npy'.format(batch, segment))
 
         time.sleep(1)
-        del SNR, stats, zerolags
+        #delete all the variables to free up memory
+        del SNR, stats, zerolags, temp_stats, pred_array, h_pred_array, l_pred_array
+        del secondary_8hz, secondary_4hz, secondary_2hz, preds_8hz_h, preds_8hz_l, preds_4hz_h, preds_4hz_l, preds_2hz_h, preds_2hz_l
+        del preds_2hz, preds_4hz, preds_8hz, combined_preds, combined_8hz, combined_4hz, combined_2hz
         gc.collect()
 
         segment += n_cleanups

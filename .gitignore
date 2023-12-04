@@ -9,6 +9,7 @@ infernus/serving/*/*
 **.npy
 
 /*.sh 
+/*.json
 
 # Serving dummy folder test files
 !./infernus/serving/dummy/*.ipynb

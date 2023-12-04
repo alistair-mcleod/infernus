@@ -79,14 +79,15 @@ def get_zerolags(
     offset: int = 20,
     buffer_length: int = 2048,
     overlap: int = int(0.2*2048),
-    num_trigs: int = 1
+    num_trigs: int = 1,
+    chop_time: int = 0
 ) -> List[List[float]]:
     zerolags = []
     
     #Refactoring data to be in the form (n_templates, n_detectors, duration) rather than (n_detectors, n_templates, duration)
     data = np.swapaxes(data, 0, 1)
     # Loop across time series in buffers
-    for i in np.arange(0, data.shape[2] - buffer_length + 1, step=buffer_length):
+    for i in np.arange(chop_time, data.shape[2] - buffer_length + 1, step=buffer_length):
         temp_zerolags = []
         
         temp_data, temp_data_trimmed = get_buffer(data, i, overlap, buffer_length)

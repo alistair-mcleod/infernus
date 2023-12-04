@@ -4,6 +4,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
 import argparse
 import gc
+import json
 import h5py
 from queue import Queue
 from functools import partial
@@ -16,6 +17,30 @@ from pycbc.types import TimeSeries
 from pycbc.filter import highpass
 
 
+#adding memory debugging
+import tracemalloc
+from collections import Counter
+import linecache
+
+def display_top(snapshot, key_type='lineno', limit=5):
+    snapshot = snapshot.filter_traces((
+        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+        tracemalloc.Filter(False, "<unknown>"),
+    ))
+    top_stats = snapshot.statistics(key_type)
+
+    print("Top %s lines" % limit)
+    for index, stat in enumerate(top_stats[:limit], 1):
+        frame = stat.traceback[0]
+        # replace "/path/to/module/file.py" with "module/file.py"
+        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
+        print("#%s: %s:%s: %.1f MiB"
+              % (index, filename, frame.lineno, stat.size / (1024)**2))
+        line = linecache.getline(frame.filename, frame.lineno).strip()
+        if line:
+            print('    %s' % line)
+
+tracemalloc.start()
 
 #infernus imports
 from noise_utils import noise_generator
@@ -31,8 +56,9 @@ parser.add_argument('--totaljobs', type=int, default=1)
 parser.add_argument('--node', type=str, default="john108")
 parser.add_argument('--port', type=int, default=8001)
 parser.add_argument('--ngpus', type=int, default=1)
-parser.add_argument('--injfile', type=str, default=None)
-parser.add_argument('--noisedir', type=str, default=None)
+parser.add_argument('--argsfile', type=str, default=None)
+
+parser.add_argument('--maxnoisesegs', type=int, default=None)
 
 args = parser.parse_args()
 
@@ -43,15 +69,16 @@ n_jobs = args.totaljobs
 gpu_node = args.node
 grpc_port = args.port + 1 #GRPC port is always 1 more than HTTP port
 n_gpus = args.ngpus
-injfile = args.injfile
-if injfile == "None":
-	injfile = None
+#injfile = args.injfile
+argsfile = args.argsfile
 
-noise_dir = args.noisedir
-if noise_dir == "None":
-	#exit
-	print("no noise dir specified, breaking")
-	sys.exit(1)
+#maxnoisesegs = args.maxnoisesegs
+
+#noise_dir = args.noisedir
+#if noise_dir == "None":
+#	#exit
+#	print("no noise dir specified, breaking")
+#	sys.exit(1)
 
 myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
 print("my folder is", myfolder)
@@ -65,6 +92,22 @@ n_jobs = n_jobs * n_workers
 print("there are {} jobs in total".format(n_jobs))
 print("I am using {} GPUs".format(n_gpus))
 
+#read args from file
+
+args = json.load(open(argsfile, "r"))
+noise_dir = args["noise_dir"]
+injfile = args["injfile"]
+
+if noise_dir == "None":
+	#exit
+	print("no noise dir specified, breaking")
+	sys.exit(1)
+
+if injfile == "None":
+	injfile = None
+
+maxnoisesegs = args["max_noise_segments"]
+
 
 
 #REGULAR SNR SERIES STUFF
@@ -75,7 +118,7 @@ duration = 1024
 sample_rate = 2048
 delta_t = 1/sample_rate
 f_lower = 30
-f_final = 1024
+f_final = sample_rate//2
 delta_f = 1/duration
 approximant = "TaylorF2"
 
@@ -200,7 +243,12 @@ callback_q = Queue()
 
 
 #MAKING JOB SMALLER
-#templates = templates[:n_jobs*30*5]
+if n_jobs <= 40:
+	#this is used in testing, as for full runs we use more jobs. 
+	#Comment out if you want to run the full template bank with fewer jobs
+	templates = templates[:n_jobs*30*5]
+	print("only doing {} templates, because this is a test run".format(len(templates)))
+
 #templates = templates[:1487]
 templates = templates[:]
 
@@ -247,6 +295,9 @@ total_noise_segments = n_noise_segments
 #WARNING! SET TO A SMALL VALUE FOR TESTING
 #n_noise_segments = 100
 #n_noise_segments = 3
+if maxnoisesegs is not None and maxnoisesegs < n_noise_segments:
+	n_noise_segments = maxnoisesegs
+	print("only doing {} noise segments".format(n_noise_segments))
 print("total noise segments:", n_noise_segments)
 
 window_size = 2048
@@ -276,7 +327,7 @@ json_dict = {
 }
 
 
-import json
+
 with open(os.path.join(myfolder, "args.json"), "w") as f:
 	json.dump(json_dict, f)
 	
@@ -411,10 +462,10 @@ for i in range(n_batches):
 			chop_index = int(((valid_times[j] - valid_times[j-1]) * sample_rate/stride))
 			print("only windows {} onwards of sample {} are needed".format(chop_index, j))
 
-			nonwindowed_SNR = nonwindowed_SNR[:, :, chop_time:]
-			n_windows = (nonwindowed_SNR.shape[-1] - window_size)//stride +1
+			#nonwindowed_SNR = nonwindowed_SNR[:, :, chop_time:]
+			#n_windows = (nonwindowed_SNR.shape[-1] - window_size)//stride +1
 			print("n_windows:", n_windows)
-			windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
+			#windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
 			start = time.time()
 		
 			for ifo in range(len(ifos)):
@@ -546,7 +597,7 @@ for i in range(n_batches):
 		print("sending time:", time.time()- predstart)
 		start = time.time()
 
-		del windowed_SNR
+		del windowed_SNR, y
 
 		print("total batches sent:", total_batches)
 		all_responses = []
@@ -613,7 +664,7 @@ for i in range(n_batches):
 		#save to my folder
 		while True:
 			try:
-				np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}.npy".format(i, j)), nonwindowed_SNR)
+				np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}_chop_{}.npy".format(i, j, chop_time//2048)), nonwindowed_SNR)
 				break
 
 			except Exception as e:
@@ -622,7 +673,7 @@ for i in range(n_batches):
 
 		while True:
 			try:
-				np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}.npy".format(i, j)), predbuf)
+				np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}_chop_{}.npy".format(i, j, chop_time//2048)), predbuf)
 				break
 
 			except Exception as e:
@@ -635,11 +686,21 @@ for i in range(n_batches):
 		timeslide_time += time.time() - start
 		
 
-		del all_responses, nonwindowed_SNR
+		del all_responses, nonwindowed_SNR, predbuf, hbuf, lbuf
 
 		gc.collect()
 
 		sys.stdout.flush()
+
+	#delete batch variables to save memory
+	del noise, template_conj
+
+	gc.collect()
+	
+	print("getting memory snapshot")
+	snapshot = tracemalloc.take_snapshot()
+	display_top(snapshot, limit = 100)
+
 
 
 print("template loading took", template_time, "seconds")
@@ -658,3 +719,8 @@ print("total time:", total_time, "seconds")
 
 print("actual run would take {} hours".format((total_noise_segments/n_noise_segments) *total_time/3600))
 
+
+#close the connection to the server(s)
+triton_client.close()
+if n_gpus == 2:
+	triton_client2.close()

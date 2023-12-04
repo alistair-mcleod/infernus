@@ -9,6 +9,7 @@
 #SBATCH --tmp=50GB
 #SBATCH --array=0-89
 
+#note: depending on the number of timeslides you're doing you may need to increase the number of CPUs
 cd /fred/oz016/alistair/infernus
 
 #get slurm job ID
@@ -16,7 +17,6 @@ jobid=$SLURM_ARRAY_JOB_ID
 
 ml gcc/11.3.0 openmpi/4.1.4 python/3.10.4 cudnn/8.4.1.50-cuda-11.7.0
 ml apptainer
-
 #source into a virtual environment with the correct packages
 source /fred/oz016/alistair/nt_310/bin/activate
 
@@ -46,16 +46,17 @@ sleep 1
 srun -n1 -c1 --exclusive --gpus=1 --mem=15gb ./infernus/serving/dummy/run_tritonserver2.sh $port2 > ./triton_logs/server${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_2.log 2>&1 &
 
 
-sleep 10
+
 n_workers=2
 totaljobs=$SLURM_ARRAY_TASK_COUNT
+n_cleanups=1 #number of cleanup jobs per worker. 1 should be enough, unless you're doing lots (>200) of timeslides.
+#1 should always be enough for injection runs, as injection runs don't have timeslides
 
 savedir=$1
 echo $savedir
-injfile=$2
-echo $injfile
-noisedir=$3
-echo $noisedir
+
+jsonfile=$2
+
 
 mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/completed
 #start the workers
@@ -65,23 +66,23 @@ do
     #make the corresponding jobfs folder
     mkdir -p $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
     echo $JOBFS/job_$SLURM_ARRAY_TASK_ID/worker_$i
-	python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --node=$node --port=$port --ngpus=$CUDA_VISIBLE_DEVS --injfile=$injfile --noisedir=$noisedir > triton_logs/worker_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
+	
+	python infernus/SNR_serving_triton.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers \
+        --totaljobs=$totaljobs --node=$node --port=$port --argsfile=$jsonfile --ngpus=$CUDA_VISIBLE_DEVS > triton_logs/worker_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
     sleep 1
-
-    #check if injfile is none
-
-    if [ $injfile != "None" ]; then
-        echo "injfile is not none, starting injfile worker"
-        python infernus/cleanup_inj.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_inj_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
-
-    else
-        echo "injfile is none, not starting injfile worker"
-        python infernus/cleanup.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers --totaljobs=$totaljobs --savedir=$savedir > triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
-    fi
 
     
+    for j in $(seq 0 $((n_cleanups-1)))
+    do
+        echo starting cleanup worker $j
+        echo writing to file triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_${i}_${j}.log
+
+        python infernus/cleanup_multitrig.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers \
+            --totaljobs=$totaljobs --cleanupid=$j --argsfile=$jsonfile --totalcleanups=$n_cleanups > triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_${i}_${j}.log 2>&1 &
+    done
+    
     sleep 1
-    #os.environ["JOBFS"] 
+     
 done
 
 
@@ -91,17 +92,15 @@ do
     #count the number of files in the jobfs folder
     num_files=$(ls -1 $JOBFS/job_$SLURM_ARRAY_TASK_ID/completed | wc -l)
 
-    if [ $num_files -eq $n_workers ]; then
+    if [ $num_files -eq $(($n_workers*$n_cleanups)) ]; then
         echo "All workers have finished. exiting in 60 seconds..."
         sleep 60
-        #scancel $array_id.0
+        
         exit 0
     fi
 
     sleep 10
 done
-
-echo "shut down triton server, waiting for cleanup jobs to finish"
 
 wait
 echo "All tasks are closed. Exiting job."

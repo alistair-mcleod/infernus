@@ -96,6 +96,11 @@ print("I am using {} GPUs".format(n_gpus))
 
 args = json.load(open(argsfile, "r"))
 noise_dir = args["noise_dir"]
+
+#injfile can take 3 valid values: "None", which leads to a background run, 
+# "Noninj" which leads to a foreground run with no injections, 
+# and a path to an injection file, which leads to a foreground run with injections.
+
 injfile = args["injfile"]
 
 if noise_dir == "None":
@@ -162,14 +167,14 @@ from GWSamplegen.waveform_utils import t_at_f
 
 all_detectors = {'H1': Detector('H1'), 'L1': Detector('L1'), 'V1': Detector('V1'), 'K1': Detector('K1')}
 
-if injfile is not None:
+if injfile is not None and injfile != "Noninj":
 	print("using injection file", injfile)
 	f = h5py.File(injfile, 'r')
 	mask = (f['injections']['gps_time'][:] > valid_times[0]) & (f['injections']['gps_time'][:] < valid_times[-1] + duration)
 	n_injs = np.sum(mask)
 
 	gps = f['injections']['gps_time'][mask]
-	mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask])
+	mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask]) #TODO: simplify by replacing with detector frame masses
 	mass2 = f['injections']['mass2_source'][mask] * (1 + f['injections']['redshift'][mask])
 	spin1x = f['injections']['spin1x'][mask]
 	spin1y = f['injections']['spin1y'][mask]
@@ -213,14 +218,17 @@ else:
 	batch_size = 1024
 	#batch_size = 512
 
-model = "test-bns-1024" #the model used by a 1 gpu server
-model = "new-hl-1024"
+#model = "test-bns-1024" #the model used by a 1 gpu server
+#model = "new-hl-1024"
+model = "model_hl"
 
-modelh = "test-h-512"   #the models used by a 2 gpu server
-modelh = "new-h-1024"
+#modelh = "test-h-512"   #the models used by a 2 gpu server
+#modelh = "new-h-1024"
+modelh = 'model_h'
 
-modell = "test-l-512"
-modell = "new-l-1024"
+#modell = "test-l-512"
+#modell = "new-l-1024"
+modell = 'model_l'
 
 # Setting up client
 
@@ -315,8 +323,9 @@ n_windows = (slice_duration*sample_rate - window_size)//stride +1
 print("n_windows:", n_windows)
 
 
-#TODO: we should save a .json file with all the configs that the cleanup job needs
-#this includes template IDs, inference rate (i.e. 16 Hz), and the number of noise segments
+#TODO: remove requirement that it's in my folder
+
+from GWSamplegen.noise_utils import load_gps_blacklist
 
 json_dict = {
 	"template_start": template_start,
@@ -324,6 +333,8 @@ json_dict = {
 	"n_noise_segments": n_noise_segments,
 	"n_batches": n_batches,
 	"injection_file": 1 if injfile else 0,
+	"valid_times": valid_times.tolist(),
+	"gps_blacklist": load_gps_blacklist(f_lower, event_file = "/fred/oz016/alistair/GWSamplegen/noise/segments/event_gpstimes.json").tolist()
 }
 
 
@@ -403,7 +414,7 @@ for i in range(n_batches):
 		noise = next(noise_gen)
 		noise_time += time.time() - start
 
-		if injfile is not None:
+		if injfile is not None and injfile != "Noninj":
 			for k in range(n_injs):
 				if startgps[k] > valid_times[j] and gps[k] + 1 < valid_times[j] + end_cutoff:
 					print("inserting injection {}".format(k))
@@ -664,8 +675,14 @@ for i in range(n_batches):
 		#save to my folder
 		while True:
 			try:
+				#assert that nonwindowed_SNR has the correct shape
+				#assert nonwindowed_SNR.shape == (len(ifos), n_templates, slice_duration*sample_rate)
 				np.save(os.path.join(myfolder, "SNR_batch_{}_segment_{}_chop_{}.npy".format(i, j, chop_time//2048)), nonwindowed_SNR)
 				break
+
+			except AssertionError as e:
+				print("preds array has wrong shape, waiting 10 seconds")
+				time.sleep(10)
 
 			except Exception as e:
 				print("Run out of disk space, waiting 10 seconds")
@@ -673,8 +690,14 @@ for i in range(n_batches):
 
 		while True:
 			try:
+				#assert that predbuf has the correct shape
+				#assert predbuf.shape == (n_templates, n_windows, det_output_shape)
 				np.save(os.path.join(myfolder, "preds_batch_{}_segment_{}_chop_{}.npy".format(i, j, chop_time//2048)), predbuf)
 				break
+
+			except AssertionError as e:
+				print("preds array has wrong shape, waiting 10 seconds")
+				time.sleep(10)
 
 			except Exception as e:
 				print("Run out of disk space, waiting 10 seconds")
@@ -697,9 +720,9 @@ for i in range(n_batches):
 
 	gc.collect()
 	
-	print("getting memory snapshot")
-	snapshot = tracemalloc.take_snapshot()
-	display_top(snapshot, limit = 100)
+	#print("getting memory snapshot")
+	#snapshot = tracemalloc.take_snapshot()
+	#display_top(snapshot, limit = 20)
 
 
 

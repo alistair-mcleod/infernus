@@ -26,8 +26,11 @@ if __name__ == "__main__":
     model_path = str(sys.argv[1])
     new_model_path = str(sys.argv[2])
     
-
-    model = keras.models.load_model(model_path, custom_objects={'LogAUC': LogAUC()})
+    try:
+        model = keras.models.load_model(model_path, custom_objects={'LogAUC': LogAUC()})
+    except:
+        #load without logAUC
+        model = keras.models.load_model(model_path)
     
     for i in range(len(model.layers)):
         print(model.layers[i].name)
@@ -37,7 +40,8 @@ if __name__ == "__main__":
     
     #rename layer concat_layer-2 to 'h_out'
     #rename layer concat_layer-1 to 'l_out'
-
+    #caveat: the first concatenation layer in your network MUST be the one used for merging H and L predictions
+    #and ONLY for merging H and L predictions. Any further inputs to the combiner model should be concatenated after.
     model.layers[concat_layer-2]._name = 'h_out'
     model.layers[concat_layer-1]._name = 'l_out'
 
@@ -46,7 +50,8 @@ if __name__ == "__main__":
     hmodel.compile()
     lmodel.compile()
 
-    hlmodel = keras.Model(inputs = model.input, outputs = model.layers[concat_layer].output)
+    #TODO: this will need to be modified if running a model with an additional H/L model input
+    hlmodel = keras.Model(inputs = model.input[:2], outputs = model.layers[concat_layer].output)
     #hlmodel.layers[-1]._name = 'concatenate'
     #print output shape
     print("HL model output shape:",hlmodel.output.shape)

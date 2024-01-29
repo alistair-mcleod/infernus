@@ -46,14 +46,19 @@ import numpy as np
 from triggering.zerolags import get_zerolags
 
 #TODO: change to a better way of splitting models
-from model_utils import split_models, new_split_models
+from model_utils import old_split_models, new_split_models
 
-tf_model='/fred/oz016/alistair/BNS_models/real_glitch_metamodel/log_auc11.h5'
-double_det, combiner = new_split_models(tf_model)
+sys.path.append("/home/amcleod/detnet/utils")
+#import train_utils from the new system path, so that the linter is happy
 
-np.random.seed(1234)
+from train_utils import LogAUC
 
+#double_det, combiner = old_split_models(tf_model)
+#double_det, combiner = new_split_models(tf_model, {'LogAUC': LogAUC()})
+#np.random.seed(1234)
 
+def idx_to_gps(idx, start_time):
+    return np.floor(idx/2048 + start_time)
 
 def get_windows_old(start_end_indexes, peak_pos, pad=True, stride = 128):
     windows = []
@@ -92,9 +97,21 @@ def get_windows(start_end_indexes, peak_pos, pad=True, stride = 128):
 
     return ret
 
+def construct_combiner_input(combiner, primary_det, delta_t, primary_preds, secondary_preds):
+    #TODO: handle case where the extra input(s) are not the time delay
+    #also handle the issue that the peak might not be in the middle 
+    if len(combiner.input) == 2:
+        if primary_det == 0:
+            return [primary_preds, secondary_preds, np.repeat(delta_t, len(primary_preds))]
+        else:
+            return [secondary_preds, primary_preds, np.repeat(delta_t, len(primary_preds))]
+    else:
+        if primary_det == 0:
+            return [primary_preds, secondary_preds, np.repeat(delta_t, len(primary_preds))]
+        else:
+            return [secondary_preds, primary_preds, np.repeat(delta_t, len(primary_preds))]
 
 if __name__ == "__main__":
-    ifo_dict = split_models()
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--jobindex', type=int)
@@ -121,6 +138,12 @@ if __name__ == "__main__":
     args = json.load(open(cmdargs.argsfile, "r"))
     savedir = args["save_dir"]
     num_time_slides = args["n_timeslides"]
+    seed = args['seed']
+    tf_model = args['tf_model']
+
+    print("using the following network: ", tf_model)
+
+    double_det, combiner = new_split_models(tf_model, {'LogAUC': LogAUC()})
     print("num_time_slides is", num_time_slides)
 
     print("cleanup ID is {} and there are {} cleanups".format(cleanup_id, n_cleanups))
@@ -170,6 +193,9 @@ if __name__ == "__main__":
     else:
         print("switching to background run mode")    
 
+    gps_blacklist = args["gps_blacklist"]
+    valid_times = args["valid_times"]
+
     #convolution kernels for moving average
     f16 = np.ones(args["inference_rate"])/args["inference_rate"]
     f8 = np.ones(args["inference_rate"]//2)/(args["inference_rate"]//2)
@@ -198,10 +224,17 @@ if __name__ == "__main__":
         # Load SNR and predictions
         SNR_file = [file for file in files if SNR_substring in file][0]
         preds_file = [file for file in files if preds_substring in file][0]
-        SNR = np.load(SNR_file)
-        preds = np.load(preds_file)
 
-        np.random.seed(1234)
+        while True:
+            try:
+                SNR = np.load(SNR_file)
+                preds = np.load(preds_file)
+                break
+            except:
+                print("failed to load SNR and preds, trying again")
+                time.sleep(5)
+
+        #np.random.seed(1234)
 
         #SNR = np.load('SNR_batch_{}_segment_{}.npy'.format(batch, segment))
         #preds = np.load('preds_batch_{}_segment_{}.npy'.format(batch, segment))
@@ -266,10 +299,34 @@ if __name__ == "__main__":
             continue
         """
 
-        # REMOVE ZEROLAGS THAT CORRESPOND TO TIMES THAT REAL EVENTS OCCUR
+        # TODO: REMOVE ZEROLAGS THAT CORRESPOND TO TIMES THAT REAL EVENTS OCCUR
         # do this by replacing those zerolags with [-1,-1,-1,-1,-1,-1]
         # zerolag format is (h1_snr, l1_snr, coh_snr, h1_time_idx, l1_time_idx, template_idx) where 
         # `h1_time_idx` and `l1_time_idx` are the data points (0 to 2048000 for 100s) and will need to be converted to GPS times (or convert the GPS times to data points)
+
+        deleted_zerolags = []
+        #for gps_time in gps_blacklist:
+        #    if gps_time > valid_times[segment] + chop_time//2048 and gps_time < valid_times[segment] + duration:
+        #        delete_time = int(gps_time - valid_times[segment] - chop_time//2048)
+        #        zerolags[delete_time] = -1
+        #        print("deleted zerolag at time", delete_time)
+        #        print("Actual GPS time of deleted event:", gps_time)
+        #        deleted_zerolags.append(delete_time)
+
+        for gps_time in gps_blacklist:
+            if gps_time > valid_times[segment] and gps_time < valid_times[segment] + duration:
+                delete_time = int(gps_time - valid_times[segment] - chop_time//2048)
+                if delete_time > 0:
+                    #to handle chopped segments, i.e. if the event is before the chop time, we still need to zero it for
+                    #timeslide purposes.
+                    zerolags[delete_time] = -1
+                print("deleted zerolag at time", delete_time)
+                print("Actual GPS time of deleted event:", gps_time)
+                deleted_zerolags.append(gps_time)
+
+        if len(deleted_zerolags) > 0:
+            print("deleted zerolags:", deleted_zerolags)
+
 
         #split the preds along the last axis in half for H and L
         #preds has the shape (n_templates, n_windows, ifo_output*2)
@@ -291,6 +348,11 @@ if __name__ == "__main__":
         preds_4hz = []
         preds_2hz = []
 
+        delta_t_array = []
+        delta_t_8hz = []
+        delta_t_4hz = []
+        delta_t_2hz = []
+
 
         primary_dets = []
         secondary_dets = []
@@ -303,9 +365,6 @@ if __name__ == "__main__":
         argwindows = 0
         spreds = 0
         appends = 0
-
-
-
 
 
 
@@ -329,6 +388,7 @@ if __name__ == "__main__":
             
             s = time.time()
             primary_det_pos = i[0][3+primary_det]
+            secondary_det_pos = i[0][3+secondary_det]
 
             
             primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
@@ -370,10 +430,19 @@ if __name__ == "__main__":
 
                 temp = i[0][3+secondary_det]
                 while len(secondary_centrals) < num_time_slides:  # Forward pass
-                    #TODO: investigate if this random shift can make the time shift go out of bounds. 
-                    #I have had different results when running this on the same data multiple times
                     temp = temp + time_shift + np.random.randint(-time_shift_var, time_shift_var+1) 
+                    #zl_id = int((temp-chop_time)//2048)
+
                     if temp + light_travel_time < start_end_indexes[-1][0]:
+
+                        #if zerolags[zl_id][0][0] == -1:
+                        #    continue
+                        if len(deleted_zerolags) > 0:
+                            if idx_to_gps(temp, valid_times[segment]) in deleted_zerolags:
+                                #print("secondary central is in deleted zerolag")
+                                #print("GPS time is", idx_to_gps(temp, valid_times[segment]))
+                                #print("This is for zerolag", key_i)
+                                continue
                         secondary_centrals.append(int(temp))
                     else:
                         #print("Stepping in reverse now")
@@ -381,7 +450,16 @@ if __name__ == "__main__":
                 temp = i[0][3+secondary_det]
                 while len(secondary_centrals) < num_time_slides:  # Backwards pass
                     temp = temp - time_shift + np.random.randint(-time_shift_var, time_shift_var+1)
+
                     if temp - light_travel_time > start_end_indexes[0][1]:
+                        #if zerolags[zl_id][0][0] == -1:
+                        #    continue
+                        if len(deleted_zerolags) > 0:
+                            if idx_to_gps(temp, valid_times[segment]) in deleted_zerolags:
+                                #print("secondary central is in deleted zerolag")
+                                #print("GPS time is", idx_to_gps(temp, valid_times[segment]))
+                                #print("This is for zerolag", key_i)
+                                continue
                         secondary_centrals.append(int(temp))
                     else:
                         print("Not enough forward and backward passes to get the desired number of time shifts.")
@@ -397,7 +475,13 @@ if __name__ == "__main__":
 
                 for j in sorted(secondary_centrals):
                     t = time.time()
+
                     peak_pos = j - light_travel_time + np.argmax(SNR[secondary_det, int(i[0][5]), j-light_travel_time:j+light_travel_time+1])
+
+                    secondary_peak = np.argmax(SNR[secondary_det, int(i[0][5]), j-sample_rate//2:j+sample_rate//2+1])
+                    
+                    #assumption: the peak pos is the same position even if the window is padded
+                    #TODO: check if this is correct
 
                     secondary_det_samples = get_windows(start_end_indexes, peak_pos)
                     secondary_det_8hz_samples = get_windows(start_end_indexes, peak_pos, stride = 256) *2
@@ -425,17 +509,34 @@ if __name__ == "__main__":
                         print('zerolag', key_i)
 
                     spreds += time.time() - t
-                    # PASS BOTH DETECTOR PREDICTIONS THROUGH COMBINING MODEL
-                    # For this dummy test, we just calculate the mean instead of passing it through a combining model
-                    # combined_preds = np.mean([primary_preds, secondary_preds], axis=0)
 
                     t = time.time()
                     if primary_det == 0:
+                        
+                        if len(combiner.input) > 2:
+                        #TODO: handle case where the extra input(s) are not the time delay
+                            delta_t = (primary_det_pos%sample_rate - secondary_peak)/light_travel_time
+
+                            delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
+                            delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
+                            delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
+                            delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
+
                         pred_array.append([primary_preds, secondary_preds])
                         preds_8hz.append([primary_8hz, secondary_8hz])
                         preds_4hz.append([primary_4hz, secondary_4hz])
                         preds_2hz.append([primary_2hz, secondary_2hz])
                     else:
+                        
+                        if len(combiner.input) > 2:
+                            delta_t = (secondary_peak - primary_det_pos%sample_rate )/light_travel_time
+
+                            delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
+                            delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
+                            delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
+                            delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
+
+
                         pred_array.append([secondary_preds, primary_preds])
                         preds_8hz.append([secondary_8hz, primary_8hz])
                         preds_4hz.append([secondary_4hz, primary_4hz])
@@ -449,15 +550,25 @@ if __name__ == "__main__":
                 secondary_2hz = preds[secondary_det][int(i[0][5]), primary_det_2hz_samples]
 
                 if primary_det == 0:
+                    delta_t = (primary_det_pos - secondary_det_pos)/light_travel_time
+
                     pred_array.append([primary_preds, secondary_preds])
                     preds_8hz.append([primary_8hz, secondary_8hz])
                     preds_4hz.append([primary_4hz, secondary_4hz])
                     preds_2hz.append([primary_2hz, secondary_2hz])
                 else:
+                    delta_t = (secondary_det_pos - primary_det_pos)/light_travel_time
+
                     pred_array.append([secondary_preds, primary_preds])
                     preds_8hz.append([secondary_8hz, primary_8hz])
                     preds_4hz.append([secondary_4hz, primary_4hz])
                     preds_2hz.append([secondary_2hz, primary_2hz])
+
+                if len(combiner.input) > 2:
+                    delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
+                    delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
+                    delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
+                    delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
 
 
                 #appends += time.time() - t
@@ -505,20 +616,39 @@ if __name__ == "__main__":
         preds_2hz_h = np.array(preds_2hz)[:,0].reshape(-1,ifo_pred_len)
         preds_2hz_l = np.array(preds_2hz)[:,1].reshape(-1,ifo_pred_len)
 
+        if len(combiner.input) > 2:
+            delta_t_array = np.array(delta_t_array).reshape(-1,1)
+            delta_t_8hz = np.array(delta_t_8hz).reshape(-1,1)
+            delta_t_4hz = np.array(delta_t_4hz).reshape(-1,1)
+            delta_t_2hz = np.array(delta_t_2hz).reshape(-1,1)
+
         print("pred array shape", pred_array.shape)
-        #combined_preds = ifo_dict['combiner'].predict([h_pred_array, l_pred_array], 
-        #                                                verbose = 2, batch_size = 4096)
-        combined_preds = combiner.predict([h_pred_array, l_pred_array], 
-                                                        verbose = 2, batch_size = 4096)
-        
-        combined_8hz = combiner.predict([preds_8hz_h, preds_8hz_l],
-                                                        verbose = 2, batch_size = 4096)
-        
-        combined_4hz = combiner.predict([preds_4hz_h, preds_4hz_l],
-                                                        verbose = 2, batch_size = 4096)
-        
-        combined_2hz = combiner.predict([preds_2hz_h, preds_2hz_l],
-                                                        verbose = 2, batch_size = 4096)
+
+        if len(combiner.input) > 2:
+            combined_preds = combiner.predict([h_pred_array, l_pred_array, delta_t_array], 
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_8hz = combiner.predict([preds_8hz_h, preds_8hz_l, delta_t_8hz],
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_4hz = combiner.predict([preds_4hz_h, preds_4hz_l, delta_t_4hz],
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_2hz = combiner.predict([preds_2hz_h, preds_2hz_l, delta_t_2hz],
+                                                            verbose = 2, batch_size = 4096)
+            
+        else:
+            combined_preds = combiner.predict([h_pred_array, l_pred_array], 
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_8hz = combiner.predict([preds_8hz_h, preds_8hz_l],
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_4hz = combiner.predict([preds_4hz_h, preds_4hz_l],
+                                                            verbose = 2, batch_size = 4096)
+            
+            combined_2hz = combiner.predict([preds_2hz_h, preds_2hz_l],
+                                                            verbose = 2, batch_size = 4096)
         
         
         combined_preds = combined_preds.reshape(-1, num_time_slides, 18)
@@ -622,12 +752,13 @@ if __name__ == "__main__":
             
             else:
                 # COMPUTE MOVING AVERAGE PREDICTIONS
-                ma_prediction_2hz = []
-                ma_prediction_4hz = []
-                ma_prediction_8hz = []
-                ma_prediction_16hz = []
-                start = args["inference_rate"]
+
+                ma_prediction_16hz = np.max(np.convolve(combined_preds[true_idx][0], f16, mode = 'valid'))
+                ma_prediction_8hz = np.max(np.convolve(combined_8hz[true_idx][0], f8, mode = 'valid'))
+                ma_prediction_4hz = np.max(np.convolve(combined_4hz[true_idx][0], f4, mode = 'valid'))
+                ma_prediction_2hz = np.max(np.convolve(combined_2hz[true_idx][0], f2, mode = 'valid'))
                 
+                """
                 while start <= len(combined_preds[true_idx][0]):
                     ma_prediction_16hz.append(np.mean(combined_preds[true_idx][0][:start]))
                     start += 1
@@ -647,11 +778,7 @@ if __name__ == "__main__":
                 ma_prediction_4hz = max(ma_prediction_4hz)
                 ma_prediction_8hz = max(ma_prediction_8hz)
                 ma_prediction_16hz = max(ma_prediction_16hz) 
-                
-                #ma_prediction_16hz = -1
-                #ma_prediction_8hz = -1
-                #ma_prediction_4hz = -1
-                #ma_prediction_2hz = -1
+                """
 
                 pred_stuff = np.array([ma_prediction_16hz, ma_prediction_8hz, ma_prediction_4hz, ma_prediction_2hz,
                                         np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_8hz[true_idx][0][1:-1]),

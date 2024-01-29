@@ -32,7 +32,9 @@ def align_stats(zl, stats):
 	
 	return stat_buffer
 
-def merge_zerolags(zl, new_zl, stats = None, new_stats = None):
+def merge_zerolags(zl, new_zl, stats = None, new_stats = None, merge_target = 2):
+	#merge_target is what we are overwriting the zerolags based on. By default it is 2, 
+	#for merging based on network SNR. if it is 6 instead, it will merge based on highest prediction.
 	count = 0
 	for i in range(len(zl)):
 
@@ -45,7 +47,7 @@ def merge_zerolags(zl, new_zl, stats = None, new_stats = None):
 			continue
 	
 		if zl[i][0][0] == -1:
-			zl[i] = new_zl[i]
+			zl[i] = np.copy(new_zl[i])
 			if stats is not None:
 				stats[i] = new_stats[i]
 			continue
@@ -55,7 +57,7 @@ def merge_zerolags(zl, new_zl, stats = None, new_stats = None):
 
 		#TODO: investigate different criteria for merging zls. 
 		#index 2 is the highest SNR, but in the future we might want to use the highest network pred.
-		if zl[i][0][2] < new_zl[i][0][2]:
+		if zl[i][0][merge_target] < new_zl[i][0][merge_target]:
 			zl[i] = new_zl[i]
 			if stats is not None:
 				stats[i] = new_stats[i]
@@ -73,11 +75,11 @@ def merge_zerolags(zl, new_zl, stats = None, new_stats = None):
 
 #timeslides_dir = "/fred/oz016/alistair/infernus/timeslides/"
 segment_dict = {}
+segment_dict_predrank = {}
 
 
 
-
-breaklimit = 100
+breaklimit = 200
 breakcount = 0
 
 while len(os.listdir(timeslides_dir)) == 0:
@@ -151,15 +153,19 @@ while True:
 				print("merging zerolags for segment {}".format(seg_idx))
 				if injfile is None:
 					segment_dict[seg_idx] = merge_zerolags(segment_dict[seg_idx][0], zl_file, segment_dict[seg_idx][1], stats_file)
+					segment_dict_predrank[seg_idx] = merge_zerolags(segment_dict_predrank[seg_idx][0], zl_file, segment_dict_predrank[seg_idx][1], stats_file, merge_target = 6)
 				else:
 					segment_dict[seg_idx] = merge_zerolags(segment_dict[seg_idx][0], zl_file)
+					segment_dict_predrank[seg_idx] = merge_zerolags(segment_dict_predrank[seg_idx][0], zl_file, merge_target = 6)
 
 			else:
 				print("creating entry {} in segment_dict".format(seg_idx))
 				if injfile is None:
-					segment_dict[seg_idx] = [zl_file, stats_file]
+					segment_dict[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
+					segment_dict_predrank[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
 				else:
-					segment_dict[seg_idx] = [zl_file]
+					segment_dict[seg_idx] = [np.copy(zl_file)]
+					segment_dict_predrank[seg_idx] = [np.copy(zl_file)]
 
 			#delete the files
 			os.remove(os.path.join(timeslides_dir,file))
@@ -172,26 +178,28 @@ while True:
 print("exited loop, saving files")
 
 master_zerolag = segment_dict["0"][0]
+master_zerolag_predrank = segment_dict_predrank["0"][0]
 
 if injfile is None:
 	master_stats = segment_dict["0"][1]
+	master_stats_predrank = segment_dict_predrank["0"][1]
 
-for key in segment_dict.keys():
+for key in sorted(segment_dict.keys()):
 	if key == "0":
 		continue
 	print("merging zerolags for segment {}".format(key))
 	master_zerolag = np.concatenate((master_zerolag, segment_dict[key][0]), axis = 0)
+	master_zerolag_predrank = np.concatenate((master_zerolag_predrank, segment_dict_predrank[key][0]), axis = 0)
 	if injfile is None:
 		master_stats = np.concatenate((master_stats, segment_dict[key][1]), axis = 0)
+		master_stats_predrank = np.concatenate((master_stats_predrank, segment_dict_predrank[key][1]), axis = 0)
 
 
-#if injfile is None:
 np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), master_zerolag)
-#np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), segment_dict)
+np.save(os.path.join(timeslides_dir, "zerolags_predrank_merged.npy"), master_zerolag_predrank)
+
 
 
 if injfile is None:
 	np.save(os.path.join(timeslides_dir, "stats_merged.npy"), master_stats)
-
-#np.save("/fred/oz016/alistair/infernus/timeslides_merged/zerolags_merged2.npy".format(key), master_zerolag)
-#np.save("/fred/oz016/alistair/infernus/timeslides_merged/stats_merged2.npy".format(key), master_stats)
+	np.save(os.path.join(timeslides_dir, "stats_predrank_merged.npy"), master_stats_predrank)

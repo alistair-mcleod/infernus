@@ -146,7 +146,7 @@ while True:
 				stats_file = align_stats(zl_file, stats_file)
 
 			#get the segment number
-			seg_idx = file.split(".")[0].split("_")[-1]
+			seg_idx = int(file.split(".")[0].split("_")[-1])
 			#check if the segment number is in the dictionary
 
 			if seg_idx in segment_dict.keys():
@@ -177,15 +177,15 @@ while True:
 
 print("exited loop, saving files")
 
-master_zerolag = segment_dict["0"][0]
-master_zerolag_predrank = segment_dict_predrank["0"][0]
+master_zerolag = segment_dict[0][0]
+master_zerolag_predrank = segment_dict_predrank[0][0]
 
 if injfile is None:
-	master_stats = segment_dict["0"][1]
-	master_stats_predrank = segment_dict_predrank["0"][1]
+	master_stats = segment_dict[0][1]
+	master_stats_predrank = segment_dict_predrank[0][1]
 
 for key in sorted(segment_dict.keys()):
-	if key == "0":
+	if key == 0:
 		continue
 	print("merging zerolags for segment {}".format(key))
 	master_zerolag = np.concatenate((master_zerolag, segment_dict[key][0]), axis = 0)

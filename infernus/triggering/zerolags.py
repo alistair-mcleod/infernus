@@ -74,7 +74,7 @@ def get_secondary(
 # put multiple of them into `zerolags`. This may be desired for injection runs
 # This is slower than just treating the max coherent SNR zerolag, so we don't use this method for background runs
 def get_zerolags(
-    data: str,
+    data: np.ndarray,
     snr_thresh: int = 4,
     offset: int = 20,
     buffer_length: int = 2048,
@@ -100,8 +100,8 @@ def get_zerolags(
             
             coh_snrs = np.sqrt(np.square(primary_maxes) + np.square(secondary_maxes))
             
-            absolute_primary_arg_maxes = primary_arg_maxes - offset + i
-            absolute_secondary_arg_maxes = secondary_arg_maxes + (primary_arg_maxes - offset) - offset + i
+            absolute_primary_arg_maxes = primary_arg_maxes - overlap//2 + i#- offset + i
+            absolute_secondary_arg_maxes = secondary_arg_maxes + (primary_arg_maxes - offset) +i  - overlap//2 #- offset + i
             coh_snr_max_arg = np.argmax(coh_snrs)
             if num_trigs > 1:
                 coh_snr_max_args = np.argsort(-coh_snrs)[:num_trigs]

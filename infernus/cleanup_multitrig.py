@@ -367,6 +367,12 @@ if __name__ == "__main__":
         appends = 0
 
 
+        peak_pos_array = []
+        #windows, detectors, templates
+        for i in range(0, SNR.shape[2]-2048+args["inference_rate"], args["inference_rate"]):
+
+            peak_pos_array.append(np.argmax(SNR[:,: , i:i+2048], axis = 2))
+        peak_pos_array = np.array(peak_pos_array)
 
         windowed_sample_end_indexes = list(range(sample_rate-1, SNR.shape[-1], sample_rate//args["inference_rate"]))
         windowed_sample_start_indexes = list(np.copy(windowed_sample_end_indexes) - (sample_rate - 1))
@@ -511,16 +517,17 @@ if __name__ == "__main__":
                     spreds += time.time() - t
 
                     t = time.time()
+
+                    h_peaks = peak_pos_array[:, 0, int(i[0][5])]
+                    l_peaks = peak_pos_array[:, 1, int(i[0][5])]
                     if primary_det == 0:
                         
                         if len(combiner.input) > 2:
                         #TODO: handle case where the extra input(s) are not the time delay
-                            delta_t = (primary_det_pos%sample_rate - secondary_peak)/light_travel_time
-
-                            delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
-                            delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
-                            delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
-                            delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
+                            delta_t_array.append((h_peaks[primary_det_samples] - l_peaks[secondary_det_samples])/light_travel_time)
+                            delta_t_8hz.append((h_peaks[primary_det_8hz_samples] - l_peaks[secondary_det_8hz_samples])/light_travel_time)
+                            delta_t_4hz.append((h_peaks[primary_det_4hz_samples] - l_peaks[secondary_det_4hz_samples])/light_travel_time)
+                            delta_t_2hz.append((h_peaks[primary_det_2hz_samples] - l_peaks[secondary_det_2hz_samples])/light_travel_time)
 
                         pred_array.append([primary_preds, secondary_preds])
                         preds_8hz.append([primary_8hz, secondary_8hz])
@@ -531,11 +538,10 @@ if __name__ == "__main__":
                         if len(combiner.input) > 2:
                             delta_t = (secondary_peak - primary_det_pos%sample_rate )/light_travel_time
 
-                            delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
-                            delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
-                            delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
-                            delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
-
+                            delta_t_array.append((h_peaks[secondary_det_samples] - l_peaks[primary_det_samples])/light_travel_time)
+                            delta_t_8hz.append((h_peaks[secondary_det_8hz_samples] - l_peaks[primary_det_8hz_samples])/light_travel_time)
+                            delta_t_4hz.append((h_peaks[secondary_det_4hz_samples] - l_peaks[primary_det_4hz_samples])/light_travel_time)
+                            delta_t_2hz.append((h_peaks[secondary_det_2hz_samples] - l_peaks[primary_det_2hz_samples])/light_travel_time)
 
                         pred_array.append([secondary_preds, primary_preds])
                         preds_8hz.append([secondary_8hz, primary_8hz])
@@ -548,6 +554,9 @@ if __name__ == "__main__":
                 secondary_8hz = preds[secondary_det][int(i[0][5]), primary_det_8hz_samples]
                 secondary_4hz = preds[secondary_det][int(i[0][5]), primary_det_4hz_samples]
                 secondary_2hz = preds[secondary_det][int(i[0][5]), primary_det_2hz_samples]
+
+                h_peaks = peak_pos_array[:, 0, int(i[0][5])]
+                l_peaks = peak_pos_array[:, 1, int(i[0][5])]
 
                 if primary_det == 0:
                     delta_t = (primary_det_pos - secondary_det_pos)/light_travel_time
@@ -565,10 +574,10 @@ if __name__ == "__main__":
                     preds_2hz.append([secondary_2hz, primary_2hz])
 
                 if len(combiner.input) > 2:
-                    delta_t_array.append(np.repeat(delta_t, len(secondary_preds)))
-                    delta_t_8hz.append(np.repeat(delta_t, len(secondary_8hz)))
-                    delta_t_4hz.append(np.repeat(delta_t, len(secondary_4hz)))
-                    delta_t_2hz.append(np.repeat(delta_t, len(secondary_2hz)))
+                    delta_t_array.append((h_peaks[primary_det_samples] - l_peaks[primary_det_samples])/light_travel_time)
+                    delta_t_8hz.append((h_peaks[primary_det_8hz_samples] - l_peaks[primary_det_8hz_samples])/light_travel_time)
+                    delta_t_4hz.append((h_peaks[primary_det_4hz_samples] - l_peaks[primary_det_4hz_samples])/light_travel_time)
+                    delta_t_2hz.append((h_peaks[primary_det_2hz_samples] - l_peaks[primary_det_2hz_samples])/light_travel_time)
 
 
                 #appends += time.time() - t

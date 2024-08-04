@@ -100,6 +100,18 @@ fd_approximant = args["fd_approximant"]
 td_approximant = args["td_approximant"]
 tf_model = args['tf_model']
 savedir = args['save_dir']
+columns = args['columns']
+
+
+#TODO: add ifos to args.json
+try:
+	ifos = args['ifos']
+
+except:
+	ifos = ["H1", "L1"]
+	print("Oi! fix your args file! add a list of ifos.")
+
+
 
 #injfile can take 3 valid values: "None", which leads to a background run, 
 # "noninj" which leads to a foreground run with no injections, 
@@ -115,7 +127,12 @@ if noise_dir == "None":
 if injfile == "None":
 	injfile = None
 
+inference_rates = np.array([int(x.split("_")[0][:-2]) for x in columns])
+window_sizes = [float(x.split("_")[1][:-1]) for x in columns]
+window_sizes = np.array(window_sizes * inference_rates, dtype= np.int32)
 
+print("inference rates:", inference_rates)
+print("window sizes:", window_sizes)
 
 #REGULAR SNR SERIES STUFF
 
@@ -143,8 +160,6 @@ N = int(duration/delta_t)
 kmin, kmax = np_get_cutoff_indices(f_lower, None, delta_f, N)
 
 
-ifos = ["H1", "L1"]
-
 psds = load_psd(noise_dir, duration,ifos , f_lower, int(1/delta_t))
 
 
@@ -167,7 +182,7 @@ from GWSamplegen.waveform_utils import t_at_f
 
 all_detectors = {'H1': Detector('H1'), 'L1': Detector('L1'), 'V1': Detector('V1'), 'K1': Detector('K1')}
 
-if injfile is not None and injfile != "noninj":
+if injfile is not None and injfile != "noninj" and injfile != "real":
 	print("using injection file", injfile)
 	f = h5py.File(injfile, 'r')
 	mask = (f['injections']['gps_time'][:] > valid_times[0]) & (f['injections']['gps_time'][:] < valid_times[-1] + duration)
@@ -206,6 +221,8 @@ if injfile is not None and injfile != "noninj":
 elif injfile == "noninj":
 	print("performing noninj run")
 
+elif injfile == "real":
+	print("Performing real event run: no GPS blacklisting")
 
 #ADDING TRITON STUFF
 
@@ -234,8 +251,7 @@ modell = 'model_l'
 
 # Setting up client
 
-#necessary for using triton server priorities
-np.constant_uint64 = partial(np.array, dtype=np.uint64)
+
 
 triton_client = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port))
 if n_gpus == 2:
@@ -262,9 +278,9 @@ def initialise_server(
 	model: str = 'model_hl', 
 	modelh: str = 'model_h', 
 	modell: str = 'model_l'
-) -> (grpcclient.InferenceServerClient, grpcclient.InferenceServerClient,
+) -> tuple[grpcclient.InferenceServerClient, grpcclient.InferenceServerClient,
 	  grpcclient.InferInput, grpcclient.InferInput, grpcclient.InferRequestedOutput,
-	  grpcclient.InferRequestedOutput, grpcclient.InferRequestedOutput):
+	  grpcclient.InferRequestedOutput, grpcclient.InferRequestedOutput]:
 	
 	"Return all the triton client and input/output objects needed for running the inference server."
 	
@@ -283,7 +299,7 @@ def initialise_server(
 
 
 #MAKING JOB SMALLER
-if n_jobs <= 100:
+if n_jobs <= 100 and injfile != 'real':
 	#this is used in testing, as for full runs we use more jobs. 
 	#Comment out if you want to run the full template bank with fewer jobs
 	templates = templates[:n_jobs*30*5]
@@ -413,7 +429,7 @@ from model_utils import new_split_models, split_model_stack
 
 import sys
 #sys.path.append("/home/amcleod/detnet/utils")
-from train_utils import LogAUC
+#from train_utils import LogAUC
 double_det, combiner, full_model = split_model_stack(tf_model)
 
 #import train_utils from the new system path, so that the linter is happy
@@ -440,7 +456,10 @@ f16 = np.ones(inference_rate)/inference_rate
 f12 = np.ones(12)/12
 f8 = np.ones(8)/8
 f4 = np.ones(4)/4
+f2 = np.ones(2)/2
 light_travel_time = sample_rate//100
+
+ma_kernels = {16: f16, 12: f12, 8: f8, 4: f4, 2: f2}
 
 statusfolder = os.path.join(os.environ["JOBFS"], "job_" +str(old_job_id), "completed") #this folder is used to shut down the triton server
 
@@ -516,7 +535,7 @@ for i in range(n_batches):
 		noise = next(noise_gen)
 		noise_time += time.time() - start
 
-		if injfile is not None and injfile != "noninj":
+		if injfile is not None and injfile != "noninj" and injfile != "real":
 			for k in range(n_injs):
 				if startgps[k] > valid_times[j] and gps[k] + 1 < valid_times[j] + end_cutoff:
 					print("inserting injection {}".format(k))
@@ -595,7 +614,16 @@ for i in range(n_batches):
 
 		
 		#Now we do the zerolag stuff
+		
+		#to make things easier, let's add some zeroes to the nonwindowed SNR if there's only one ifo
 
+		if len(ifos) == 1:
+			if ifos[0] == "L1":
+				nonwindowed_SNR = np.concatenate((np.zeros((1, nonwindowed_SNR.shape[1], nonwindowed_SNR.shape[2])), nonwindowed_SNR), 
+									 	axis = 0, dtype=np.float32)
+			else:
+				nonwindowed_SNR = np.concatenate((nonwindowed_SNR, np.zeros((1, nonwindowed_SNR.shape[1], nonwindowed_SNR.shape[2]))), 
+										axis = 0, dtype=np.float32)
 
 		zerolags = get_zerolags(
 			data = nonwindowed_SNR,
@@ -613,17 +641,17 @@ for i in range(n_batches):
 		print("there are {} zerolags".format(len(zerolags)))
 
 		deleted_zerolags = []
-
-		for gps_time in gps_blacklist:
-			if gps_time > valid_times[j] and gps_time < valid_times[j] + duration:
-				delete_time = int(gps_time - valid_times[j] - chop_time//2048)
-				if delete_time > 0:
-					#to handle chopped segments, i.e. if the event is before the chop time, we still need to zero it for
-					#timeslide purposes.
-					zerolags[delete_time] = -1
-				print("deleted zerolag at time", delete_time)
-				print("Actual GPS time of deleted event:", gps_time)
-				deleted_zerolags.append(gps_time)
+		if injfile != "real":
+			for gps_time in gps_blacklist:
+				if gps_time > valid_times[j] and gps_time < valid_times[j] + slice_duration:
+					delete_time = int(gps_time - valid_times[j] - chop_time//2048)
+					if delete_time > 0:
+						#to handle chopped segments, i.e. if the event is before the chop time, we still need to zero it for
+						#timeslide purposes.
+						zerolags[delete_time] = -1
+					print("deleted zerolag at time", delete_time)
+					print("Actual GPS time of deleted event:", gps_time)
+					deleted_zerolags.append(gps_time)
 
 		if len(deleted_zerolags) > 0:
 			print("deleted zerolags:", deleted_zerolags)
@@ -644,6 +672,12 @@ for i in range(n_batches):
 		SNR_send = []
 		delta_t_send = []
 
+		pred_arrays = {}
+		for rate in inference_rates:
+			pred_arrays[rate] = {"h": [], "l": [], "delta_t_array": []}
+
+		rate_sum = sum(rate+2 for rate in pred_arrays)
+
 		for key_k, k in enumerate(zerolags):
 				
 			# Check this zerolag is valid
@@ -654,13 +688,22 @@ for i in range(n_batches):
 			
 			#process the zerolags
 
+			#TODO: iterate through the different unique sample rates, like in background_timeslides.py.
+			#as a quick solution, just append the needed samples to SNR_send and delta_t_send.
+			#then when we receive them 
 
 			primary_det = np.argmax(k[0][:2])
 			primary_det_pos = k[0][3+primary_det]
-			primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
+			#primary_det_samples = get_windows(start_end_indexes, primary_det_pos)
 
-			if len(primary_det_samples) < inference_rate+2 or primary_det_samples[0] < 0 or \
-						primary_det_samples[-1] >= len(start_end_indexes):
+			primary_det_samples = []
+			for rate in pred_arrays:
+				pred_arrays[rate]["primary_det_samples"] = get_windows(start_end_indexes, primary_det_pos, stride = sample_rate//rate) * int(16/rate)
+			
+			primary_det_samples = np.concatenate([pred_arrays[rate]["primary_det_samples"] for rate in pred_arrays])
+
+			if len(primary_det_samples) < rate_sum or min(primary_det_samples) < 0 or \
+						max(primary_det_samples) >= len(start_end_indexes):
 				print(f"Not enough space either side to get full moving average predictions for primary detector in zerolag {key_k}:")
 				print(k)
 				zerolags[key_k][0][0] = -1
@@ -675,8 +718,6 @@ for i in range(n_batches):
 				SNR_send.append(nonwindowed_SNR[:, int(k[0][5]), p*stride:p*stride+window_size])
 
 				delta_t_send.append(-np.diff(peak_pos_array[p, :, int(k[0][5])])[0] / light_travel_time)
-
-
 
 
 		if i == 0 and j == 0:
@@ -698,7 +739,8 @@ for i in range(n_batches):
 
 		#if, instead we concatenate it will have shape (2, zerolags, window_size)
 		
-		SNR_send = np.array(SNR_send)
+		#forcing float 32 just in case
+		SNR_send = np.array(SNR_send, dtype=np.float32)
 		SNR_send = np.swapaxes(SNR_send, 0, 1)
 
 		tritonbatches = int(np.ceil(SNR_send.shape[1]/batch_size))
@@ -809,29 +851,62 @@ for i in range(n_batches):
 		#next, feed the predictions into the combiner model
 		det_output_shape = predbuf.shape[1]//2
 		delta_t_send = np.array(delta_t_send)
+
+		if len(ifos) == 1:
+			#fill delta_t array with ones.
+			#TODO: investigate (briefly) the effect of 
+			delta_t_send.fill(1.0)
+
+			#need to wipe the predbuf as well for the missing ifo
+
+			#TODO: these fill values may change depending on requirements.
+			#if you use a multiply combine layer, use a fill value of 1.0, else a value of 0.0 should work.
+
+			if ifos[0] == "H1":
+				predbuf[:, det_output_shape:].fill(0.0)
+			elif ifos[0] == "L1":
+				predbuf[:, :det_output_shape].fill(0.0)
+
+
 		combined_preds = combiner.predict([predbuf[:, :det_output_shape], predbuf[:, det_output_shape:], delta_t_send],
 																	verbose = 2, batch_size = 1024)
 		
-		combined_preds = combined_preds.reshape(-1, 1, 18)
+		#TODO: need to split up the predictions by a different amount if we have multiple inference rates.
+		#18 needs to be sum(inference_rates) + 2*len(inference_rates)
+		#we then split up these pred timeseries into [0:inference_rate[0]], [inference_rate[0]:inference_rate[0]+inference_rate[1]], etc.
+		#MAKE SURE EVERYTHING IS IN A DICTIONARY!
+
+		combined_preds = combined_preds.reshape(-1, 1, rate_sum)
 		print("combined preds shape: {}".format(combined_preds.shape))
+
+		rate_idx = 0
+		for rate in pred_arrays:
+			#print(primary_det_samples[rate_idx:rate_idx+rate+2])
+			pred_arrays[rate]['preds'] = combined_preds[:, :, rate_idx:rate_idx+rate+2]
+			print(pred_arrays[rate]['preds'][0])
+			rate_idx += rate + 2
+			
 
 		true_idx = 0
 		for key_k, k in enumerate(zerolags):
 			if k[0, 0] == -1.0:
 				#print(f"Zerolag {key_i} is invalid")
 				continue
+			
+			for idx, rate in enumerate(inference_rates):
+				ma_prediction = np.max(np.convolve(pred_arrays[rate]["preds"][true_idx][0], ma_kernels[window_sizes[idx]], mode = 'valid'))
+				zerolags[key_k][0][6+idx] = ma_prediction
+			#ma_prediction_16hz = np.max(np.convolve(combined_preds[true_idx][0], f16, mode = 'valid'))
+			#ma_prediction_16hz_12 = np.max(np.convolve(combined_preds[true_idx][0], f12, mode = 'valid'))
+			#ma_prediction_16hz_8 = np.max(np.convolve(combined_preds[true_idx][0], f8, mode = 'valid'))
+			#ma_prediction_16hz_4 = np.max(np.convolve(combined_preds[true_idx][0], f4, mode = 'valid'))
 
-			ma_prediction_16hz = np.max(np.convolve(combined_preds[true_idx][0], f16, mode = 'valid'))
-			ma_prediction_16hz_12 = np.max(np.convolve(combined_preds[true_idx][0], f12, mode = 'valid'))
-			ma_prediction_16hz_8 = np.max(np.convolve(combined_preds[true_idx][0], f8, mode = 'valid'))
-			ma_prediction_16hz_4 = np.max(np.convolve(combined_preds[true_idx][0], f4, mode = 'valid'))
-
-			pred_stuff = np.array([ma_prediction_16hz, ma_prediction_16hz_12, ma_prediction_16hz_8, ma_prediction_16hz_4,
-											np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1]),
-											np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1])])
+			#pred_stuff = np.array([ma_prediction_16hz, ma_prediction_16hz_12, ma_prediction_16hz_8, ma_prediction_16hz_4,
+			#								np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1]),
+			#								np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1])])
 
 
-			zerolags[key_k][0][-8:] = pred_stuff
+			#zerolags[key_k][0][-8:] = pred_stuff
 
 
 			true_idx += 1
@@ -840,13 +915,13 @@ for i in range(n_batches):
 		print("zl_shape:", zerolags.shape)
 		#save the zerolags to disk
 		print("saving to zerolag file: zerolags_{}-{}_batch_{}_segment_{}.npy".\
-				format(template_start, template_start + n_templates, i, j))
+				format(template_start_idx, template_start_idx + n_templates, i, j))
 		
 		np.save(os.path.join(savedir, "zerolags_{}-{}_batch_{}_segment_{}.npy".\
-				format(template_start, template_start + n_templates, i, j)), zerolags)
+				format(template_start_idx, template_start_idx + n_templates, i, j)), zerolags)
 
 
-		del all_responses, nonwindowed_SNR, predbuf, hbuf, lbuf, zerolags, combined_preds
+		del all_responses, nonwindowed_SNR, predbuf, hbuf, lbuf, zerolags, combined_preds, pred_arrays, SNR_send, delta_t_send
 
 		gc.collect()
 

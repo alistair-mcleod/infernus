@@ -11,8 +11,8 @@ from tritonclient.grpc._infer_result import InferResult
 from tritonclient.utils import InferenceServerException
 
 #TODO: handle this more gracefully
-sys.path.append("/home/amcleod/detnet/utils")
-from train_utils import LogAUC
+#sys.path.append("/home/amcleod/detnet/utils")
+#from train_utils import LogAUC
 
 def residual_block(X, kernels, conv_stride):
 
@@ -212,7 +212,7 @@ def new_split_models(model_path, custom_objects):
     return double_det, combiner
 
 
-
+"""
 def old_split_models(model_path):
     #split a model into two different models: one which takes an input from each detector, 
     #and one which takes an input from the previous model. However, you'll have to split the output of model 1
@@ -242,8 +242,7 @@ def old_split_models(model_path):
     combiner.compile()
 
     return double_det, combiner
-
-
+"""
 
 #ONNX functions
 

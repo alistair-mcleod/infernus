@@ -4,14 +4,22 @@ import sys
 import time
 import numpy as np
 import argparse
+import json
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--savedir', type=str, default="/fred/oz016/alistair/infernus/timeslides/")
-parser.add_argument('--injfile', type=str, default=None)
+parser.add_argument('--jsonfile', type=str, default=None)
 args = parser.parse_args()
 
 timeslides_dir = args.savedir
-injfile = args.injfile # only used to check if we're doing injections, not actually used.
+#load json file
+jsonfile = args.jsonfile
+
+args = json.load(open(jsonfile, "r"))
+injfile = args["injfile"]
+columns = args['columns']
+
+#injfile = args.injfile # only used to check if we're doing injections, not actually used.
 
 if injfile == "None":
 	injfile = None
@@ -122,6 +130,10 @@ segment_dict_predrank2 = {}
 segment_dict_predrank3 = {}
 segment_dict_predrank4 = {}
 
+segment_dict = {}
+for col in columns:
+	segment_dict[col] = {"segs": {}}
+
 
 breaklimit = 200
 breakcount = 0
@@ -194,36 +206,26 @@ while True:
 			seg_idx = int(file.split(".")[0].split("_")[-1])
 			#check if the segment number is in the dictionary
 
-			if seg_idx in segment_dict.keys():
+			if seg_idx in segment_dict[columns[0]]['segs'].keys():
 				print("merging zerolags for segment {}".format(seg_idx))
 				if injfile is None:
-					segment_dict[seg_idx] = merge_zerolags_and_stats(segment_dict[seg_idx][0], zl_file, segment_dict[seg_idx][1], stats_file)
-					segment_dict_predrank[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank[seg_idx][0], zl_file, segment_dict_predrank[seg_idx][1], stats_file, merge_target = 6)
-					segment_dict_predrank2[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank2[seg_idx][0], zl_file, segment_dict_predrank2[seg_idx][1], stats_file, merge_target = 7)
-					segment_dict_predrank3[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank3[seg_idx][0], zl_file, segment_dict_predrank3[seg_idx][1], stats_file, merge_target = 8)
-					segment_dict_predrank4[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank4[seg_idx][0], zl_file, segment_dict_predrank4[seg_idx][1], stats_file, merge_target = 9)
+					for idx, col in enumerate(columns):
+						segment_dict[col]['segs'][seg_idx] = merge_zerolags_and_stats(segment_dict[col]['segs'][seg_idx][0], zl_file, 
+															segment_dict[col]['segs'][seg_idx][1], stats_file, merge_target = 6 + idx)
 				else:
-					segment_dict[seg_idx] = merge_zerolags_and_stats(segment_dict[seg_idx][0], zl_file)
-					segment_dict_predrank[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank[seg_idx][0], zl_file, merge_target = 6)
-					segment_dict_predrank2[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank2[seg_idx][0], zl_file, merge_target = 7)
-					segment_dict_predrank3[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank3[seg_idx][0], zl_file, merge_target = 8)
-					segment_dict_predrank4[seg_idx] = merge_zerolags_and_stats(segment_dict_predrank4[seg_idx][0], zl_file, merge_target = 9)
+					for idx, col in enumerate(columns):
+						segment_dict[col]['segs'][seg_idx] = merge_zerolags_and_stats(segment_dict[col]['segs'][seg_idx][0], zl_file, merge_target = 6 + idx)
 
 
 			else:
 				print("creating entry {} in segment_dict".format(seg_idx))
 				if injfile is None:
-					segment_dict[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
-					segment_dict_predrank[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
-					segment_dict_predrank2[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
-					segment_dict_predrank3[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
-					segment_dict_predrank4[seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
+					for idx, col in enumerate(columns):
+						segment_dict[col]['segs'][seg_idx] = [np.copy(zl_file), np.copy(stats_file)]
+
 				else:
-					segment_dict[seg_idx] = [np.copy(zl_file)]
-					segment_dict_predrank[seg_idx] = [np.copy(zl_file)]
-					segment_dict_predrank2[seg_idx] = [np.copy(zl_file)]
-					segment_dict_predrank3[seg_idx] = [np.copy(zl_file)]
-					segment_dict_predrank4[seg_idx] = [np.copy(zl_file)]
+					for idx, col in enumerate(columns):
+						segment_dict[col]['segs'][seg_idx] = [np.copy(zl_file)]
 
 
 			#delete the files
@@ -236,49 +238,27 @@ while True:
 
 print("exited loop, saving files")
 
-master_zerolag = segment_dict[0][0]
-master_zerolag_predrank = segment_dict_predrank[0][0]
-master_zerolag_predrank2 = segment_dict_predrank2[0][0]
-master_zerolag_predrank3 = segment_dict_predrank3[0][0]
-master_zerolag_predrank4 = segment_dict_predrank4[0][0]
+
+for col in columns:
+	segment_dict[col]['master_zerolag'] = segment_dict[col]['segs'][0][0]
+	for key in sorted(segment_dict[col]['segs'].keys()):
+		if key == 0:
+			continue
+
+		segment_dict[col]['master_zerolag'] = np.concatenate((segment_dict[col]['master_zerolag'], segment_dict[col]['segs'][key][0]), axis = 0)
 
 
 if injfile is None:
-	master_stats = segment_dict[0][1]
-	master_stats_predrank = segment_dict_predrank[0][1]
-	master_stats_predrank2 = segment_dict_predrank2[0][1]
-	master_stats_predrank3 = segment_dict_predrank3[0][1]
-	master_stats_predrank4 = segment_dict_predrank4[0][1]
+	for col in columns:
+		segment_dict[col]['master_stats'] = segment_dict[col]['segs'][0][1]
+		for key in sorted(segment_dict[col]['segs'].keys()):
+			if key == 0:
+				continue
 
-for key in sorted(segment_dict.keys()):
-	if key == 0:
-		continue
-	print("merging zerolags for segment {}".format(key))
-	master_zerolag = np.concatenate((master_zerolag, segment_dict[key][0]), axis = 0)
-	master_zerolag_predrank = np.concatenate((master_zerolag_predrank, segment_dict_predrank[key][0]), axis = 0)
-	master_zerolag_predrank2 = np.concatenate((master_zerolag_predrank2, segment_dict_predrank2[key][0]), axis = 0)
-	master_zerolag_predrank3 = np.concatenate((master_zerolag_predrank3, segment_dict_predrank3[key][0]), axis = 0)
-	master_zerolag_predrank4 = np.concatenate((master_zerolag_predrank4, segment_dict_predrank4[key][0]), axis = 0)
+			segment_dict[col]['master_stats'] = np.concatenate((segment_dict[col]['master_stats'], segment_dict[col]['segs'][key][1]), axis = 0)
 
+
+for col in columns:
+	np.save(os.path.join(timeslides_dir, "zerolags_merged_{}.npy".format(col)), segment_dict[col]['master_zerolag'])
 	if injfile is None:
-		master_stats = np.concatenate((master_stats, segment_dict[key][1]), axis = 0)
-		master_stats_predrank = np.concatenate((master_stats_predrank, segment_dict_predrank[key][1]), axis = 0)
-		master_stats_predrank2 = np.concatenate((master_stats_predrank2, segment_dict_predrank2[key][1]), axis = 0)
-		master_stats_predrank3 = np.concatenate((master_stats_predrank3, segment_dict_predrank3[key][1]), axis = 0)
-		master_stats_predrank4 = np.concatenate((master_stats_predrank4, segment_dict_predrank4[key][1]), axis = 0)
-
-
-np.save(os.path.join(timeslides_dir, "zerolags_merged.npy"), master_zerolag)
-np.save(os.path.join(timeslides_dir, "zerolags_predrank_merged.npy"), master_zerolag_predrank)
-np.save(os.path.join(timeslides_dir, "zerolags_predrank2_merged.npy"), master_zerolag_predrank2)
-np.save(os.path.join(timeslides_dir, "zerolags_predrank3_merged.npy"), master_zerolag_predrank3)
-np.save(os.path.join(timeslides_dir, "zerolags_predrank4_merged.npy"), master_zerolag_predrank4)
-
-
-
-if injfile is None:
-	np.save(os.path.join(timeslides_dir, "stats_merged.npy"), master_stats)
-	np.save(os.path.join(timeslides_dir, "stats_predrank_merged.npy"), master_stats_predrank)
-	np.save(os.path.join(timeslides_dir, "stats_predrank2_merged.npy"), master_stats_predrank2)
-	np.save(os.path.join(timeslides_dir, "stats_predrank3_merged.npy"), master_stats_predrank3)
-	np.save(os.path.join(timeslides_dir, "stats_predrank4_merged.npy"), master_stats_predrank4)
+		np.save(os.path.join(timeslides_dir, "stats_merged_{}.npy".format(col)), segment_dict[col]['master_stats'])

@@ -16,6 +16,13 @@ def get_best_zerolags(
     
     return zerolags_sorted[:num_trigs]
 
+def get_best_zerolag(
+    zerolags: List[List[float]],
+) -> List[float]:
+    #return only the top zerolag, rather than a list of zerolags
+    if len(zerolags) == 0:
+        return [[-1,-1,-1,-1,-1,-1]]
+    return [zerolags[np.argmax([zerolag[2] for zerolag in zerolags])]]
 
 def get_buffer(
     data: np.ndarray,

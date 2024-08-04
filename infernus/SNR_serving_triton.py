@@ -9,7 +9,7 @@ import h5py
 from queue import Queue
 from functools import partial
 import tritonclient.grpc as grpcclient
-from GWSamplegen.noise_utils import load_psd, get_valid_noise_times
+from GWSamplegen.noise_utils import load_psd, get_valid_noise_times, load_gps_blacklist
 from GWSamplegen.waveform_utils import load_pycbc_templates
 from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq
 from pycbc.waveform import get_fd_waveform, get_td_waveform
@@ -40,7 +40,7 @@ def display_top(snapshot, key_type='lineno', limit=5):
         if line:
             print('    %s' % line)
 
-tracemalloc.start()
+#tracemalloc.start()
 
 #infernus imports
 from noise_utils import noise_generator
@@ -58,8 +58,6 @@ parser.add_argument('--port', type=int, default=8001)
 parser.add_argument('--ngpus', type=int, default=1)
 parser.add_argument('--argsfile', type=str, default=None)
 
-parser.add_argument('--maxnoisesegs', type=int, default=None)
-
 args = parser.parse_args()
 
 job_id = args.jobindex #job id in job array
@@ -73,12 +71,6 @@ n_gpus = args.ngpus
 argsfile = args.argsfile
 
 #maxnoisesegs = args.maxnoisesegs
-
-#noise_dir = args.noisedir
-#if noise_dir == "None":
-#	#exit
-#	print("no noise dir specified, breaking")
-#	sys.exit(1)
 
 myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
 print("my folder is", myfolder)
@@ -96,9 +88,17 @@ print("I am using {} GPUs".format(n_gpus))
 
 args = json.load(open(argsfile, "r"))
 noise_dir = args["noise_dir"]
+maxnoisesegs = args["max_noise_segments"]
+template_bank_dir = args["template_bank_dir"]
+template_bank_name = args["template_bank_name"]
+duration = args["duration"]
+sample_rate = args["sample_rate"]
+f_lower = args["f_lower"]
+fd_approximant = args["fd_approximant"]
+td_approximant = args["td_approximant"]
 
 #injfile can take 3 valid values: "None", which leads to a background run, 
-# "Noninj" which leads to a foreground run with no injections, 
+# "noninj" which leads to a foreground run with no injections, 
 # and a path to an injection file, which leads to a foreground run with injections.
 
 injfile = args["injfile"]
@@ -111,32 +111,29 @@ if noise_dir == "None":
 if injfile == "None":
 	injfile = None
 
-maxnoisesegs = args["max_noise_segments"]
-
 
 
 #REGULAR SNR SERIES STUFF
 
 print(noise_dir)
 #noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
-duration = 1024
-sample_rate = 2048
+#duration = 1024
+#sample_rate = 2048
 delta_t = 1/sample_rate
-f_lower = 30
+#f_lower = 30
 f_final = sample_rate//2
 delta_f = 1/duration
-approximant = "TaylorF2"
+#fd_approximant = "TaylorF2"
+#td_approximant = "SpinTaylorT4"
 
 #import multiprocessing as mp
 #n_cpus = 2
 
-WINDOW_SIZE = 2048
-STEP = 128
+#WINDOW_SIZE = 2048
+#STEP = 128
 
-
-
-valid_times, paths, file_list = get_valid_noise_times(noise_dir,duration, 900)
-templates, metricParams, aXis= load_pycbc_templates("PyCBC_98_aligned_spin", "/fred/oz016/alistair/GWSamplegen/template_banks/")
+valid_times, paths, file_list = get_valid_noise_times(noise_dir,duration, 900, blacklisting = False)
+templates, _, _= load_pycbc_templates(template_bank_name, template_bank_dir)
 
 N = int(duration/delta_t)
 kmin, kmax = np_get_cutoff_indices(f_lower, None, delta_f, N)
@@ -146,7 +143,6 @@ ifos = ["H1", "L1"]
 
 psds = load_psd(noise_dir, duration,ifos , f_lower, int(1/delta_t))
 
-#new numpy code time!
 
 for psd in psds:
 	psds[psd] = psds[psd][kmin:kmax]
@@ -154,7 +150,7 @@ for psd in psds:
 
 
 hp, _ = get_td_waveform(mass1 = templates[0,1], mass2 = templates[0,2], 
-						delta_t = delta_t, f_lower = f_lower, approximant = 'SpinTaylorT4')
+						delta_t = delta_t, f_lower = f_lower, approximant = td_approximant)
 
 max_waveform_length = len(hp)/sample_rate
 max_waveform_length = max(32, int(np.ceil(max_waveform_length/10)*10))
@@ -167,7 +163,7 @@ from GWSamplegen.waveform_utils import t_at_f
 
 all_detectors = {'H1': Detector('H1'), 'L1': Detector('L1'), 'V1': Detector('V1'), 'K1': Detector('K1')}
 
-if injfile is not None and injfile != "Noninj":
+if injfile is not None and injfile != "noninj":
 	print("using injection file", injfile)
 	f = h5py.File(injfile, 'r')
 	mask = (f['injections']['gps_time'][:] > valid_times[0]) & (f['injections']['gps_time'][:] < valid_times[-1] + duration)
@@ -237,9 +233,10 @@ if n_gpus == 2:
 	triton_client2 = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port+3))
 
 
-dummy_data = np.random.normal(size=(batch_size, 2048,1)).astype(np.float32)
-inputh = grpcclient.InferInput("h", dummy_data.shape, datatype="FP32")
-inputl = grpcclient.InferInput("l", dummy_data.shape, datatype="FP32")
+#dummy_data = np.random.normal(size=(batch_size, 2048,1)).astype(np.float32)
+
+inputh = grpcclient.InferInput("h", (batch_size, 2048, 1), datatype="FP32")
+inputl = grpcclient.InferInput("l", (batch_size, 2048, 1), datatype="FP32")
 
 #handle both one and two model cases
 output = grpcclient.InferRequestedOutput("concat")
@@ -248,6 +245,32 @@ outputl = grpcclient.InferRequestedOutput("l_out")
 
 
 callback_q = Queue()
+
+
+def initialise_server(
+	gpu_node: str, 
+	grpc_port: str, 
+	model: str = 'model_hl', 
+	modelh: str = 'model_h', 
+	modell: str = 'model_l'
+) -> (grpcclient.InferenceServerClient, grpcclient.InferenceServerClient,
+	  grpcclient.InferInput, grpcclient.InferInput, grpcclient.InferRequestedOutput,
+	  grpcclient.InferRequestedOutput, grpcclient.InferRequestedOutput):
+	
+	"Return all the triton client and input/output objects needed for running the inference server."
+	
+	triton_client = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port))
+	triton_client2 = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port+3))
+
+	inputh = grpcclient.InferInput("h", (batch_size, 2048, 1), datatype="FP32")
+	inputl = grpcclient.InferInput("l", (batch_size, 2048, 1), datatype="FP32")
+	output = grpcclient.InferRequestedOutput("concat")
+	outputh = grpcclient.InferRequestedOutput("h_out")
+	outputl = grpcclient.InferRequestedOutput("l_out")
+
+	return triton_client, triton_client2, inputh, inputl, output, outputh, outputl
+
+#triton_client, triton_client2, inputh, inputl, output, outputh, outputl = initialise_server(gpu_node, grpc_port)
 
 
 #MAKING JOB SMALLER
@@ -265,9 +288,11 @@ total_templates = len(templates)
 print("total templates:", total_templates)
 templates_per_job = int(np.ceil((len(templates)/n_jobs)))
 main_job_templates = templates_per_job
-last_job_templates = total_templates - templates_per_job * (n_jobs - 1)
+#last_job_templates = total_templates - templates_per_job * (n_jobs - 1)
 
-total_lastjob = last_job_templates + templates_per_job
+#total_lastjob = last_job_templates + templates_per_job
+total_lastjob = total_templates - templates_per_job * (n_jobs - n_workers)
+
 print("total templates in last job:", total_lastjob)
 
 
@@ -277,15 +302,31 @@ template_start = templates_per_job * job_id
 #	templates_per_job = last_job_templates
 #	print("last job, only doing {} templates".format(templates_per_job))
 
-if old_job_id == n_jobs/n_workers - 1:
-	print("I'm a worker in the last job.")
-	if worker_id == 0:
-		templates_per_job = int(np.ceil(total_lastjob/2))
-		template_start = total_templates - total_lastjob
+
+# if old_job_id == n_jobs/n_workers - 1:
+# 	print("I'm a worker in the last job.")
+# 	if worker_id == 0:
+# 		templates_per_job = int(np.ceil(total_lastjob/2))
+# 		template_start = total_templates - total_lastjob
 		
-	if worker_id == 1:
-		templates_per_job = int(np.floor(total_lastjob/2))
-		template_start = total_templates - templates_per_job
+# 	if worker_id == 1:
+# 		templates_per_job = int(np.floor(total_lastjob/2))
+# 		template_start = total_templates - templates_per_job
+
+if old_job_id == n_jobs/n_workers - 1:
+	template_start = total_templates - total_lastjob
+	for i in range(n_workers):
+
+		templates_per_job = int(np.floor(total_lastjob/n_workers))
+		if i < total_lastjob%n_workers:
+			templates_per_job += 1
+		if worker_id == i:
+			print("I'm a worker in the last job.")
+			print(i)
+			print(templates_per_job)
+			print(template_start)
+			break
+		template_start += templates_per_job
 
 
 print("templates per job:", templates_per_job)
@@ -308,8 +349,13 @@ if maxnoisesegs is not None and maxnoisesegs < n_noise_segments:
 	print("only doing {} noise segments".format(n_noise_segments))
 print("total noise segments:", n_noise_segments)
 
+noise_seg_start = 0
+if maxnoisesegs is not None and maxnoisesegs == 123:
+	print("Special run, should only be a one-off")
+	n_noise_segments = len(valid_times)
+	noise_seg_start = 120
+
 window_size = 2048
-sample_rate = 2048
 stride = 128
 
 start_cutoff = max_waveform_length
@@ -325,7 +371,7 @@ print("n_windows:", n_windows)
 
 #TODO: remove requirement that it's in my folder
 
-from GWSamplegen.noise_utils import load_gps_blacklist
+
 
 json_dict = {
 	"template_start": template_start,
@@ -389,7 +435,7 @@ for i in range(n_batches):
 								   mass2 = templates[template_start_idx + j,2],
 								   spin1z = templates[template_start_idx + j,3], 
 								   spin2z = templates[template_start_idx + j,4],
-								   approximant = approximant, f_lower = f_lower, 
+								   approximant = fd_approximant, f_lower = f_lower, 
 								   delta_f = delta_f, f_final = f_final)[0].data[kmin:kmax]
 	template_time += time.time() - start
 	#reload the noise from the start
@@ -404,7 +450,7 @@ for i in range(n_batches):
 
 	#preds = {"H1": [], "L1": []}
 
-	for j in range(n_noise_segments):
+	for j in range(noise_seg_start, n_noise_segments):
 		n_windows = (slice_duration*sample_rate - window_size)//stride +1
 		nonwindowed_SNR = np.empty((len(ifos), n_templates, slice_duration*sample_rate), dtype=np.float32)
 		windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
@@ -414,7 +460,7 @@ for i in range(n_batches):
 		noise = next(noise_gen)
 		noise_time += time.time() - start
 
-		if injfile is not None and injfile != "Noninj":
+		if injfile is not None and injfile != "noninj":
 			for k in range(n_injs):
 				if startgps[k] > valid_times[j] and gps[k] + 1 < valid_times[j] + end_cutoff:
 					print("inserting injection {}".format(k))
@@ -426,7 +472,7 @@ for i in range(n_batches):
 								spin2x = spin2x[k], spin2y = spin2y[k],
 								spin1z = spin1z[k], spin2z = spin2z[k],
 								inclination = inclination[k], distance = distance[k],
-											delta_t = delta_t, f_lower = f_lower, approximant = 'SpinTaylorT4')
+											delta_t = delta_t, f_lower = f_lower, approximant = td_approximant)
 
 					for ifo in ifos:
 						f_plus, f_cross = all_detectors[ifo].antenna_pattern(
@@ -446,7 +492,7 @@ for i in range(n_batches):
 		for ifo in range(len(ifos)):
 			
 			start = time.time()
-			template_norm = np_sigmasq(t_templates, psds[ifos[ifo]], N, kmin, kmax, delta_f)
+			template_norm = np_sigmasq(t_templates, psds[ifos[ifo]], delta_f)
 
 			strain = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
 			strain = highpass(strain,f_lower).to_frequencyseries(delta_f=delta_f).data
@@ -512,7 +558,7 @@ for i in range(n_batches):
 		start = time.time()
 
 		
-		print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
+		#print("example shape:", windowed_SNR[0, 0, 0:batch_size, :].shape)
 		total_batches = 0
 
 		#reshape into (2, flattened_windowed_SNR, 2048)
@@ -523,7 +569,7 @@ for i in range(n_batches):
 		reshape_time += time.time() - start
 
 		tritonbatches = int(np.ceil(windowed_SNR.shape[1]/batch_size))
-		total_batches_sent += n_workers* tritonbatches #to account for 2 workers
+		total_batches_sent += n_workers* tritonbatches #to account for n workers
 
 
 		#workers wait before sending their first batch so that the server processes them in the correct order
@@ -535,10 +581,17 @@ for i in range(n_batches):
 		else:
 			successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
 		
-		if worker_id == 0:
-			reqbatches = int(total_batches_sent - 2.3 * tritonbatches)
-		if worker_id == 1:
-			reqbatches = int(total_batches_sent - 1.3 * tritonbatches)
+		#if worker_id == 0:
+		#	reqbatches = int(total_batches_sent - 2.3 * tritonbatches)
+		#if worker_id == 1:
+		#	reqbatches = int(total_batches_sent - 1.3 * tritonbatches)
+
+		#the 0.3 is to allow the next worker to start sending batches slightly before the previous worker's are finished.
+		reqbatches = int(total_batches_sent - (n_workers - worker_id + 0.3) * tritonbatches) 
+
+		#testing new method that doesn't need required batches
+		#reqbatches = 0
+
 		#if worker_id == 2:
 		#	reqbatches = int(total_batches_sent - 0.3 * tritonbatches)
 		if old_job_id == n_jobs/n_workers - 1 and i == n_batches - 1 and worker_id == 0:
@@ -556,7 +609,7 @@ for i in range(n_batches):
 			#	reqbatches -= tritonbatches * 0.5
 			#print("sending in whatever order, as one of these jobs may have fewer templates")
 
-					
+		timeout = 0
 		while successes < reqbatches:
 			print("worker waiting, only {} successes. we need {}".format(successes, reqbatches))
 			#print("queue size:",triton_client.get_inference_statistics(model).model_stats[0].inference_stats.nv_inference_pending_request_count.count)
@@ -566,7 +619,11 @@ for i in range(n_batches):
 				successes = triton_client.get_inference_statistics(model).model_stats[0].inference_stats.success.count
 			else:
 				successes = triton_client.get_inference_statistics(modelh).model_stats[0].inference_stats.success.count
+			timeout += 1
 
+			if timeout > 60:
+				print("worker has been waiting too long, sending batch anyway")
+				reqbatches = 0 
 		wait_time += time.time() - start
 
 
@@ -593,16 +650,19 @@ for i in range(n_batches):
 			request_id_l = str(k) + "_" + str(bufsize) + '_l'
 			
 			if n_gpus == 1:
-				triton_client.async_infer(model_name=model, inputs=[inputh, inputl], outputs=[output],
-								request_id=request_id, callback=partial(onnx_callback,callback_q))
+				triton_client.async_infer(model_name=model, inputs=[inputh, inputl], outputs=[outputh, outputl],
+								request_id=request_id, callback=partial(onnx_callback,callback_q)) 
+								#priority = np.constant_uint64(((i*n_noise_segments + j) * n_workers + worker_id)))
 				total_batches += 1
 
 			else:
 				triton_client.async_infer(model_name=modelh, inputs=[inputh], outputs=[outputh],
 								request_id=request_id_h, callback=partial(onnx_callback,callback_q))
+								#priority = np.constant_uint64(((i*n_noise_segments + j) * n_workers + worker_id)))
 				
 				triton_client2.async_infer(model_name=modell, inputs=[inputl], outputs=[outputl],
 								request_id=request_id_l, callback=partial(onnx_callback,callback_q))
+								#priority = np.constant_uint64(((i*n_noise_segments + j) * n_workers + worker_id)))
 				total_batches += 2
 		
 		print("sending time:", time.time()- predstart)
@@ -630,6 +690,8 @@ for i in range(n_batches):
 		det_output_shape = all_responses[0][0].shape[-1]
 		if i == 0 and j == 0:
 			print("det output shape:", det_output_shape)
+			#print("here's a response:", all_responses[0][0].shape)
+			#print(all_responses[0])
 
 		start = time.time()
 		#newshape
@@ -709,7 +771,7 @@ for i in range(n_batches):
 		timeslide_time += time.time() - start
 		
 
-		del all_responses, nonwindowed_SNR, predbuf, hbuf, lbuf
+		del all_responses, nonwindowed_SNR, predbuf, hbuf, lbuf#, noise
 
 		gc.collect()
 
@@ -744,6 +806,6 @@ print("actual run would take {} hours".format((total_noise_segments/n_noise_segm
 
 
 #close the connection to the server(s)
-triton_client.close()
-if n_gpus == 2:
-	triton_client2.close()
+#triton_client.close()
+#if n_gpus == 2:
+#	triton_client2.close()

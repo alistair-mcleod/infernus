@@ -21,8 +21,11 @@ if __name__ == "__main__":
     #get output name
     outputs = onnx_model.graph.output
 
+    print("outputs:", outputs)
+
     output_name = outputs[0].name
     print(outputs[0].type.tensor_type.shape)
+    #assumes all outputs (if there are multiple) have the same shape
     output_shape = outputs[0].type.tensor_type.shape.dim.pop().dim_value
     print(f"output_shape: {output_shape}")
 
@@ -60,13 +63,14 @@ if __name__ == "__main__":
         f.write("    dims: [" + str(batch_size) + ", " + str(2048) + ", 1]" + "\n")
         f.write("  }" + "\n")
         f.write("]" + "\n")
-    f.write("output [" + "\n")
-    f.write("  {" + "\n")
-    f.write("    name: " + "\"" + str(output_name) + "\"" + "\n")
-    f.write("    data_type: TYPE_FP32" + "\n")
-    f.write("    dims: [" + str(batch_size) + ", " + str(output_shape) + "]" + "\n")
-    f.write("  }" + "\n")
-    f.write("]" + "\n")
+    for i in outputs:
+        f.write("output [" + "\n")
+        f.write("  {" + "\n")
+        f.write("    name: " + "\"" + str(i.name) + "\"" + "\n")
+        f.write("    data_type: TYPE_FP32" + "\n")
+        f.write("    dims: [" + str(batch_size) + ", " + str(output_shape) + "]" + "\n")
+        f.write("  }" + "\n")
+        f.write("]" + "\n")
     f.write("""instance_group [
     {
         count: 6

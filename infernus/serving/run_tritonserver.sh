@@ -14,7 +14,4 @@ echo $savedir
 
 serverdir=${3}
 
-# Start the triton server
-#/fred/oz016/damon/triton_server/containers_22.11/tritonserver.sif
-
 apptainer run --nv -B ${savedir}:/models ${serverdir} tritonserver --model-repository=/models --backend-config=onnxruntime,default-max-batch-size=512 --exit-on-error=true --http-port $http_port --grpc-port $grpc_port --metrics-port $metrics_port

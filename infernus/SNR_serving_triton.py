@@ -116,18 +116,10 @@ if injfile == "None":
 #REGULAR SNR SERIES STUFF
 
 print(noise_dir)
-#noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
-#duration = 1024
-#sample_rate = 2048
 delta_t = 1/sample_rate
-#f_lower = 30
 f_final = sample_rate//2
 delta_f = 1/duration
-#fd_approximant = "TaylorF2"
-#td_approximant = "SpinTaylorT4"
 
-#import multiprocessing as mp
-#n_cpus = 2
 
 #WINDOW_SIZE = 2048
 #STEP = 128
@@ -368,11 +360,7 @@ n_windows = (slice_duration*sample_rate - window_size)//stride +1
 
 print("n_windows:", n_windows)
 
-
-#TODO: remove requirement that it's in my folder
-
-
-
+#TODO: add the ability to load the gps blacklist from a different file
 json_dict = {
 	"template_start": template_start,
 	"inference_rate": sample_rate//stride,
@@ -380,7 +368,7 @@ json_dict = {
 	"n_batches": n_batches,
 	"injection_file": 1 if injfile else 0,
 	"valid_times": valid_times.tolist(),
-	"gps_blacklist": load_gps_blacklist(f_lower, event_file = "/fred/oz016/alistair/GWSamplegen/noise/segments/event_gpstimes.json").tolist()
+	"gps_blacklist": load_gps_blacklist(f_lower).tolist()
 }
 
 

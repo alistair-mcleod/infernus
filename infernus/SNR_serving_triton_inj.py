@@ -103,15 +103,13 @@ savedir = args['save_dir']
 columns = args['columns']
 
 
-#TODO: add ifos to args.json
 try:
 	ifos = args['ifos']
-
 except:
 	ifos = ["H1", "L1"]
-	print("Oi! fix your args file! add a list of ifos.")
+	print("Fix your args file! add a list of ifos.")
 
-
+print("ifos:", ifos)
 
 #injfile can take 3 valid values: "None", which leads to a background run, 
 # "noninj" which leads to a foreground run with no injections, 
@@ -137,19 +135,9 @@ print("window sizes:", window_sizes)
 #REGULAR SNR SERIES STUFF
 
 print(noise_dir)
-#noise_dir = "/fred/oz016/alistair/GWSamplegen/noise/O3_third_week_1024"
-#duration = 1024
-#sample_rate = 2048
 delta_t = 1/sample_rate
-#f_lower = 30
 f_final = sample_rate//2
 delta_f = 1/duration
-#fd_approximant = "TaylorF2"
-#td_approximant = "SpinTaylorT4"
-
-#import multiprocessing as mp
-#n_cpus = 2
-
 #WINDOW_SIZE = 2048
 #STEP = 128
 
@@ -237,28 +225,19 @@ else:
 	batch_size = 1024
 	#batch_size = 512
 
-#model = "test-bns-1024" #the model used by a 1 gpu server
-#model = "new-hl-1024"
+#the model used by a 1 gpu server
 model = "model_hl"
 
-#modelh = "test-h-512"   #the models used by a 2 gpu server
-#modelh = "new-h-1024"
+#the models used by a 2 gpu server
 modelh = 'model_h'
-
-#modell = "test-l-512"
-#modell = "new-l-1024"
 modell = 'model_l'
 
 # Setting up client
 
 
-
 triton_client = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port))
 if n_gpus == 2:
 	triton_client2 = grpcclient.InferenceServerClient(url=gpu_node + ":"+ str(grpc_port+3))
-
-
-#dummy_data = np.random.normal(size=(batch_size, 2048,1)).astype(np.float32)
 
 inputh = grpcclient.InferInput("h", (batch_size, 2048, 1), datatype="FP32")
 inputl = grpcclient.InferInput("l", (batch_size, 2048, 1), datatype="FP32")
@@ -401,7 +380,8 @@ json_dict = {
 	"valid_times": valid_times.tolist()
 }
 
-gps_blacklist = load_gps_blacklist(f_lower, event_file = "/fred/oz016/alistair/GWSamplegen/noise/segments/event_gpstimes.json").tolist()
+#TODO: add the ability to load the gps blacklist from a different file
+gps_blacklist = load_gps_blacklist(f_lower).tolist()
 
 
 with open(os.path.join(myfolder, "args.json"), "w") as f:
@@ -428,13 +408,7 @@ from triggering.zerolags import get_zerolags
 from model_utils import new_split_models, split_model_stack
 
 import sys
-#sys.path.append("/home/amcleod/detnet/utils")
-#from train_utils import LogAUC
 double_det, combiner, full_model = split_model_stack(tf_model)
-
-#import train_utils from the new system path, so that the linter is happy
-
-
 
 def idx_to_gps(idx, start_time):
     return np.floor(idx/2048 + start_time)

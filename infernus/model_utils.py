@@ -10,10 +10,6 @@ from typing import Optional
 from tritonclient.grpc._infer_result import InferResult
 from tritonclient.utils import InferenceServerException
 
-#TODO: handle this more gracefully
-#sys.path.append("/home/amcleod/detnet/utils")
-#from train_utils import LogAUC
-
 def residual_block(X, kernels, conv_stride):
 
     out = keras.layers.Conv1D(kernels, 3, conv_stride, padding='same', activation='elu')(X)

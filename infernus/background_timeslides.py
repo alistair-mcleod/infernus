@@ -1,9 +1,3 @@
-
-
-
-
-
-
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import json
@@ -21,8 +15,6 @@ def println(str):
 from triggering.zerolags import get_zerolags
 
 from model_utils import split_model_stack
-
-
 
 
 def get_windows(start_end_indexes, peak_pos, pad=True, stride = 128, sample_rate = 2048):
@@ -124,7 +116,7 @@ if __name__ == "__main__":
 	if injs:
 		num_time_slides = 0
 		print("switching to injection run mode")
-		print("ERROR: should not have gotten here. This code is not used in injection runs")
+		exit("ERROR: should not have gotten here. This code is not used in injection runs")
 
 	else:
 		print("switching to background run mode")    
@@ -133,6 +125,7 @@ if __name__ == "__main__":
 	valid_times = args["valid_times"]
 
 	#convolution kernels for moving average
+	#TODO: construct the kernels from the window sizes
 	f16 = np.ones(args["inference_rate"])/args["inference_rate"]
 	f12 = np.ones(12)/12
 	f8 = np.ones(8)/8
@@ -180,10 +173,7 @@ if __name__ == "__main__":
 		chop_time = int(SNR_file.split("_")[-1].split(".")[0]) 
 		print("chop time is", chop_time)
 		chop_idx = chop_time * sample_rate
-		#if n_templates != SNR.shape[1]:
-		#    print("This batch of SNR has a different number of templates ({} vs {})! This is the correct behaviour it's the last batch...".format(SNR.shape[1], n_templates))
 		n_templates = SNR.shape[1]
-
 
 		deleted_zerolags = []
 		delete_times = []
@@ -202,10 +192,7 @@ if __name__ == "__main__":
 
 		preds_reshaped = np.array(np.split(preds, 2, axis = -1))
 
-
-		#TODO: verify that this behaviour is correct with different inference rates
 		peak_pos_array = []
-		#windows, detectors, templates
 		for i in range(0, SNR.shape[2]-2048+sample_rate//args["inference_rate"], sample_rate//args["inference_rate"]):
 
 			peak_pos_array.append(np.argmax(SNR[:, :, i:i+2048], axis = 2))
@@ -217,13 +204,13 @@ if __name__ == "__main__":
 		start_end_indexes = list(zip(windowed_sample_start_indexes, windowed_sample_end_indexes))
 
 		zerolags = get_zerolags(
-		data = SNR,
-		snr_thresh = 4,
-		offset = 20,
-		buffer_length = 2048,
-		overlap = int(0.2*2048),
-		num_trigs = 1,
-		chop_time = chop_idx,
+			data = SNR,
+			snr_thresh = 4,
+			offset = 20,
+			buffer_length = 2048,
+			overlap = int(0.2*2048),
+			num_trigs = 1,
+			chop_time = chop_idx,
 		)
 
 		zl_array = np.full((len(zerolags), 1, 14), -1, dtype=np.float32)
@@ -243,15 +230,10 @@ if __name__ == "__main__":
 		for rate in inference_rates:
 			pred_arrays[rate] = {"h": [], "l": [], "delta_t_array": []}
 
-		#h_pred_array = []
-		#l_pred_array = []
-
 		zl_id = []
 		ts_id = []
 
-		#delta_t_array = []
-
-		#NOTE: the +1 is to include the zerolag as the 0th timeslide. the zl array is saved as a check that the timeslides are correct.
+		#NOTE: the +1 is to include the zerolag as the 0th timeslide. The zl array is saved as a check that the timeslides are correct.
 		#i.e. the distribution of timeslide predictions should be the same as the distribution of zerolags.
 
 		for i in range(-1,num_time_slides):
@@ -259,13 +241,6 @@ if __name__ == "__main__":
 			#roll the Livingston SNR
 			
 			SNR_rolled[1,:,:] = np.roll(SNR[1,:,:], 2048*(i+1), axis = 1)
-			#TODO: also roll pred array! will probably make everything else a lot easier.
-			#preds_reshaped[1] = np.roll(preds_reshaped[1], 16*(i+1), axis = 1)
-			#peak_pos_array[:,1] = np.roll(peak_pos_array[:,1], 16*(i+1), axis = 0)
-
-			#need to roll by 16 each time.
-
-			#get the zerolags for this timeslide
 
 			timeslides = get_zerolags(
 				data = SNR_rolled,
@@ -291,8 +266,6 @@ if __name__ == "__main__":
 			timeslides[:,4] = (timeslides[:,4] - 2048 * (i+1)) % (900 * 2048)
 			
 			#NOTE: need to be careful here, if we're doing an invalid timeslide we're setting the L pos to something other than -1
-			# 2 * 2048 % (900 * 2048)
-
 
 			for j in range(len(timeslides)):
 				#for each second
@@ -310,7 +283,6 @@ if __name__ == "__main__":
 					continue
 
 				#on the ith timeslide, we have moved the data i+1 seconds
-				#TODO: factor in chop time, I think it's needed here
 				
 				#TODO: change how deleted_zerolags works so that you're saving the timeslide and not the gps time to a list
 
@@ -322,20 +294,15 @@ if __name__ == "__main__":
 				# hanford's stuff is at index j
 				# livingston's stuff is at index (j - i + 1) % 900
 				
-				#primary_detector = np.argmax(timeslides[j, :2])
 
-				#TODO: remove assumption that there's a 16hz inference rate
+				#TODO: remove assumption that there's a 16hz inference rate being tested.
 				H_det_samples = get_windows(start_end_indexes, timeslides[j, 3])
 				L_det_samples = get_windows(start_end_indexes, timeslides[j, 4])
 
 				for rate in pred_arrays:
 					pred_arrays[rate]["H_det_samples"] = get_windows(start_end_indexes, timeslides[j, 3], stride = sample_rate//rate) * int(16/rate)
 					pred_arrays[rate]["L_det_samples"] = get_windows(start_end_indexes, timeslides[j, 4], stride = sample_rate//rate) * int(16/rate)
-				
-				#TODO: clean up
-				#H_det_samples = get_windows(start_end_indexes, timeslides[j, 3+primary_detector])
-				#L_det_samples = H_det_samples
-				
+								
 				template = int(timeslides[j, 5])
 
 				#once we're past this check, we know that all included timslides are valid
@@ -343,8 +310,6 @@ if __name__ == "__main__":
 					or H_det_samples[0] < 0 or H_det_samples[-1] >= len(start_end_indexes) or L_det_samples[0] < 0 or L_det_samples[-1] >= len(start_end_indexes):
 					#set the timeslide to -1
 					timeslides[j] = -1
-					#print(len(H_det_samples), len(L_det_samples))
-					#print("timeslide too short")
 					continue
 
 				for rate in pred_arrays:
@@ -354,13 +319,6 @@ if __name__ == "__main__":
 					pred_arrays[rate]['h'].append(preds_reshaped[0, template, h_samples])
 					pred_arrays[rate]['l'].append(preds_reshaped[1, template, l_samples])
 					pred_arrays[rate]['delta_t_array'].append((peak_pos_array[h_samples, 0, template] - peak_pos_array[l_samples, 1, template])/light_travel_time)
-					#pred_arrays[rate]['zl_id'].append(j)
-					#pred_arrays[rate]['ts_id'].append(i)
-
-				#h_pred_array.append(preds_reshaped[0, template, H_det_samples])
-				#l_pred_array.append(preds_reshaped[1, template, L_det_samples])
-
-				#delta_t_array.append((peak_pos_array[H_det_samples, 0, template] - peak_pos_array[L_det_samples, 1, template])/light_travel_time)
 
 				zl_id.append(j)
 				ts_id.append(i)
@@ -369,13 +327,6 @@ if __name__ == "__main__":
 			
 			if i != -1:
 				stat_array[:, i, :3] = timeslides[:,:3]
-
-
-		#h_pred_array = np.array(h_pred_array)  
-		#l_pred_array = np.array(l_pred_array)
-
-		#h_pred_array = h_pred_array.reshape(-1, ifo_pred_len)
-		#l_pred_array = l_pred_array.reshape(-1, ifo_pred_len)
 
 		for rate in pred_arrays:
 			pred_arrays[rate]['h'] = np.array(pred_arrays[rate]['h']).reshape(-1, ifo_pred_len)
@@ -395,24 +346,9 @@ if __name__ == "__main__":
 
 			println("combined preds shape for {}hz: {}".format(rate, combined_preds.shape))
 
-		#if len(combiner.input) > 2:
-		#	delta_t_array = np.array(delta_t_array).reshape(-1,1)
-		#	combined_preds = combiner.predict([h_pred_array, l_pred_array, delta_t_array], 
-		#										verbose = 2, batch_size = 1024)
-
-		#else:
-		#	combined_preds = combiner.predict([h_pred_array, l_pred_array], 
-		#										verbose = 2, batch_size = 1024)
-			
-		
-		#combined_preds = combined_preds.reshape(-1, 18)
-
-		#println("combined preds shape: {}".format(combined_preds.shape))
-
 		zl_array[:,0,:6] = np.array(zerolags)[:, 0, :6]
 		
 		for idx, rate in enumerate(inference_rates):
-			#print("using conv kernel of size", window_sizes[idx])
 			if "pred_array" not in pred_arrays[rate]:
 				pred_arrays[rate]["pred_array"] = np.full((len(timeslides), num_time_slides+1, rate+2), -1000, dtype = np.float32)
 
@@ -421,47 +357,11 @@ if __name__ == "__main__":
 					pred_arrays[rate]["pred_array"][zl_id[i], ts_id[i] + 1] = pred_arrays[rate]['combined_preds'][i]
 				
 			x = np.apply_along_axis(lambda m: np.convolve(m, ma_kernels[window_sizes[idx]], mode = 'valid'), 2, pred_arrays[rate]["pred_array"])
-			#pred_arrays[rate][window_sizes[idx]] 
 			ma_prediction = np.max(x, axis = -1)
 			
 			zl_array[:, 0, 6 + idx] = ma_prediction[:,0]
 			stat_array[:, :, 3 + idx] = ma_prediction[:,1:]
 
-		"""
-		pred_array = np.full((len(timeslides), num_time_slides+1, 18), -1000, dtype = np.float32)
-
-		for i in range(len(zl_id)):
-			#the +1 i
-			pred_array[zl_id[i], ts_id[i] + 1] = combined_preds[i]
-
-		x = np.apply_along_axis(lambda m: np.convolve(m, f16, mode = 'valid'), 2, pred_array)
-		ma_prediction_16hz_16 = np.max(x, axis = -1)
-
-		x = np.apply_along_axis(lambda m: np.convolve(m, f12, mode = 'valid'), 2, pred_array)
-		ma_prediction_16hz_12 = np.max(x, axis = -1)
-
-		x = np.apply_along_axis(lambda m: np.convolve(m, f8, mode = 'valid'), 2, pred_array)
-		ma_prediction_16hz_8 = np.max(x, axis = -1)
-
-		x = np.apply_along_axis(lambda m: np.convolve(m, f4, mode = 'valid'), 2, pred_array)
-		ma_prediction_16hz_4 = np.max(x, axis = -1)
-
-		max_16hz = np.max(pred_array[:,:, 1:-1], axis = -1)
-
-		#remember, the first timeslide is the zerolag which needs to be saved to zerolag_array
-		zl_array[:,0,:6] = np.array(zerolags)[:, 0, :6]
-		zl_array[:,0,6] = ma_prediction_16hz_16[:,0]
-		zl_array[:,0,7] = ma_prediction_16hz_12[:,0]
-		zl_array[:,0,8] = ma_prediction_16hz_8[:,0]
-		zl_array[:,0,9] = ma_prediction_16hz_4[:,0]
-		zl_array[:,0,10] = max_16hz[:,0]
-
-		stat_array[:, :, 3] = ma_prediction_16hz_16[:,1:]
-		stat_array[:, :, 4] = ma_prediction_16hz_12[:,1:]
-		stat_array[:, :, 5] = ma_prediction_16hz_8[:,1:]
-		stat_array[:, :, 6] = ma_prediction_16hz_4[:,1:]
-		stat_array[:, :, 7] = max_16hz[:,1:]
-		"""		
 
 		#TODO: need to modify saved stats, as we should save template information since each timeslide is treated independently...
 		zl_array[:,0,5] += template_start

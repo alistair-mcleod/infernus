@@ -15,32 +15,8 @@ from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigm
 from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.types import TimeSeries
 from pycbc.filter import highpass
+from typing import Tuple
 
-
-#adding memory debugging
-import tracemalloc
-from collections import Counter
-import linecache
-
-def display_top(snapshot, key_type='lineno', limit=5):
-    snapshot = snapshot.filter_traces((
-        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
-        tracemalloc.Filter(False, "<unknown>"),
-    ))
-    top_stats = snapshot.statistics(key_type)
-
-    print("Top %s lines" % limit)
-    for index, stat in enumerate(top_stats[:limit], 1):
-        frame = stat.traceback[0]
-        # replace "/path/to/module/file.py" with "module/file.py"
-        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
-        print("#%s: %s:%s: %.1f MiB"
-              % (index, filename, frame.lineno, stat.size / (1024)**2))
-        line = linecache.getline(frame.filename, frame.lineno).strip()
-        if line:
-            print('    %s' % line)
-
-#tracemalloc.start()
 
 #infernus imports
 from noise_utils import noise_generator
@@ -53,12 +29,10 @@ parser.add_argument('--jobindex', type=int)
 parser.add_argument('--workerid', type=int, default=0)
 parser.add_argument('--totalworkers', type=int, default=1)
 parser.add_argument('--totaljobs', type=int, default=1)
-parser.add_argument('--node', type=str, default="john108")
+parser.add_argument('--node', type=str, default=None)
 parser.add_argument('--port', type=int, default=8001)
 parser.add_argument('--ngpus', type=int, default=1)
 parser.add_argument('--argsfile', type=str, default=None)
-
-parser.add_argument('--maxnoisesegs', type=int, default=None)
 
 args = parser.parse_args()
 
@@ -72,7 +46,6 @@ n_gpus = args.ngpus
 #injfile = args.injfile
 argsfile = args.argsfile
 
-#maxnoisesegs = args.maxnoisesegs
 
 myfolder = os.path.join(os.environ["JOBFS"], "job_" +str(job_id), "worker_"+str(worker_id))
 print("my folder is", myfolder)
@@ -123,7 +96,8 @@ if noise_dir == "None":
 	sys.exit(1)
 
 if injfile == "None":
-	injfile = None
+	#exit
+	exit("no injection file specified")
 
 inference_rates = np.array([int(x.split("_")[0][:-2]) for x in columns])
 window_sizes = [float(x.split("_")[1][:-1]) for x in columns]
@@ -132,12 +106,13 @@ window_sizes = np.array(window_sizes * inference_rates, dtype= np.int32)
 print("inference rates:", inference_rates)
 print("window sizes:", window_sizes)
 
-#REGULAR SNR SERIES STUFF
+print("noise directory:",noise_dir)
 
-print(noise_dir)
 delta_t = 1/sample_rate
 f_final = sample_rate//2
 delta_f = 1/duration
+
+
 #WINDOW_SIZE = 2048
 #STEP = 128
 
@@ -210,20 +185,17 @@ elif injfile == "noninj":
 	print("performing noninj run")
 
 elif injfile == "real":
-	print("Performing real event run: no GPS blacklisting")
-
-#ADDING TRITON STUFF
+	print("Performing real event search: no GPS blacklisting")
 
 
 print("connecting to {} on port {}".format(gpu_node, grpc_port))
-print("new GRPC port on", grpc_port+3)
 
 #batch size for triton model
 if n_gpus == 1:
 	batch_size = 1024
 else:
+	#currently there's no batch size difference
 	batch_size = 1024
-	#batch_size = 512
 
 #the model used by a 1 gpu server
 model = "model_hl"
@@ -257,7 +229,7 @@ def initialise_server(
 	model: str = 'model_hl', 
 	modelh: str = 'model_h', 
 	modell: str = 'model_l'
-) -> tuple[grpcclient.InferenceServerClient, grpcclient.InferenceServerClient,
+) -> Tuple[grpcclient.InferenceServerClient, grpcclient.InferenceServerClient,
 	  grpcclient.InferInput, grpcclient.InferInput, grpcclient.InferRequestedOutput,
 	  grpcclient.InferRequestedOutput, grpcclient.InferRequestedOutput]:
 	
@@ -277,45 +249,19 @@ def initialise_server(
 #triton_client, triton_client2, inputh, inputl, output, outputh, outputl = initialise_server(gpu_node, grpc_port)
 
 
-#MAKING JOB SMALLER
+#TODO: add better logic for making jobs smaller for testing
 if n_jobs <= 100 and injfile != 'real':
-	#this is used in testing, as for full runs we use more jobs. 
-	#Comment out if you want to run the full template bank with fewer jobs
 	templates = templates[:n_jobs*30*5]
 	print("only doing {} templates, because this is a test run".format(len(templates)))
-
-#templates = templates[:1487]
-templates = templates[:]
 
 total_templates = len(templates)
 
 print("total templates:", total_templates)
 templates_per_job = int(np.ceil((len(templates)/n_jobs)))
 main_job_templates = templates_per_job
-#last_job_templates = total_templates - templates_per_job * (n_jobs - 1)
-
-#total_lastjob = last_job_templates + templates_per_job
 total_lastjob = total_templates - templates_per_job * (n_jobs - n_workers)
-
-print("total templates in last job:", total_lastjob)
-
-
 template_start = templates_per_job * job_id
-
-#if job_id == n_jobs - 1:
-#	templates_per_job = last_job_templates
-#	print("last job, only doing {} templates".format(templates_per_job))
-
-
-# if old_job_id == n_jobs/n_workers - 1:
-# 	print("I'm a worker in the last job.")
-# 	if worker_id == 0:
-# 		templates_per_job = int(np.ceil(total_lastjob/2))
-# 		template_start = total_templates - total_lastjob
-		
-# 	if worker_id == 1:
-# 		templates_per_job = int(np.floor(total_lastjob/2))
-# 		template_start = total_templates - templates_per_job
+print("total templates in last job:", total_lastjob)
 
 if old_job_id == n_jobs/n_workers - 1:
 	template_start = total_templates - total_lastjob
@@ -336,6 +282,7 @@ if old_job_id == n_jobs/n_workers - 1:
 print("templates per job:", templates_per_job)
 #templates_per_batch is the target number of templates to do per batch.
 #the last batch will have equal or fewer templates.
+#TODO: add to json config file
 templates_per_batch = 30
 
 n_batches = int(np.ceil(templates_per_job/templates_per_batch))
@@ -345,9 +292,6 @@ print("batches per job:", n_batches)
 
 n_noise_segments = len(valid_times)
 total_noise_segments = n_noise_segments
-#WARNING! SET TO A SMALL VALUE FOR TESTING
-#n_noise_segments = 100
-#n_noise_segments = 3
 if maxnoisesegs is not None and maxnoisesegs < n_noise_segments:
 	n_noise_segments = maxnoisesegs
 	print("only doing {} noise segments".format(n_noise_segments))
@@ -366,27 +310,8 @@ n_windows = (slice_duration*sample_rate - window_size)//stride +1
 
 print("n_windows:", n_windows)
 
-
-#TODO: remove requirement that it's in my folder
-
-
-
-json_dict = {
-	"template_start": template_start,
-	"inference_rate": sample_rate//stride,
-	"n_noise_segments": n_noise_segments,
-	"n_batches": n_batches,
-	"injection_file": 1 if injfile else 0,
-	"valid_times": valid_times.tolist()
-}
-
 #TODO: add the ability to load the gps blacklist from a different file
 gps_blacklist = load_gps_blacklist(f_lower).tolist()
-
-
-with open(os.path.join(myfolder, "args.json"), "w") as f:
-	json.dump(json_dict, f)
-	
 
 print("initialisation took", time.time() - start, "seconds")
 
@@ -396,7 +321,6 @@ mf_time = 0
 window_time = 0
 strain_time = 0
 pred_time = 0
-timeslide_time = 0
 reshape_time = 0
 wait_time = 0
 
@@ -490,14 +414,8 @@ for i in range(n_batches):
 	#reload the noise from the start
 
 	noise_gen = noise_generator(valid_times, paths, file_list, duration, sample_rate)
-	
-	#windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
-	#strain_np = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
 
 	template_conj = np.conjugate(t_templates)
-	#template_norm = np_sigmasq(t_templates, psds[ifos[0]], N, kmin, kmax, delta_f)
-
-	#preds = {"H1": [], "L1": []}
 
 	for j in range(n_noise_segments):
 		n_windows = (slice_duration*sample_rate - window_size)//stride +1
@@ -513,7 +431,6 @@ for i in range(n_batches):
 			for k in range(n_injs):
 				if startgps[k] > valid_times[j] and gps[k] + 1 < valid_times[j] + end_cutoff:
 					print("inserting injection {}".format(k))
-					#print(k) 
 					#insert into the loaded noise
 
 					hp, hc = get_td_waveform(mass1 = mass1[k], mass2 = mass2[k], 
@@ -535,8 +452,7 @@ for i in range(n_batches):
 						#print(end_idx, end_idx - len(detector_signal))
 						#print("inj stats:", mass1[k], mass2[k], spin1z[k], spin2z[k], inclination[k], distance[k])
 
-						#TODO: remove multiplier on detector signal once finished testing !
-						noise[ifos.index(ifo),end_idx - len(detector_signal):end_idx] += detector_signal #*10
+						noise[ifos.index(ifo),end_idx - len(detector_signal):end_idx] += detector_signal
 		
 		for ifo in range(len(ifos)):
 			
@@ -553,12 +469,9 @@ for i in range(n_batches):
 			y = mf_in_place(strain_np, psds[ifos[ifo]], N, kmin, kmax, template_conj, template_norm)
 			nonwindowed_SNR[ifo, :, :] = np.abs(y[:,start_cutoff*sample_rate:end_cutoff*sample_rate]).astype(np.float32)
 
-			#print("y shape:", y.shape)
 			mf_time += time.time() - start
 
 		del y
-
-		#print("windowed_SNR starts with", windowed_SNR[:, 0, 0, :10])
 
 		if j > 0 and (valid_times[j] - valid_times[j-1]) < slice_duration:
 			chop_time = int((slice_duration - (valid_times[j] - valid_times[j-1])) * sample_rate)
@@ -567,29 +480,17 @@ for i in range(n_batches):
 			chop_index = int(((valid_times[j] - valid_times[j-1]) * sample_rate/stride))
 			print("only windows {} onwards of sample {} are needed".format(chop_index, j))
 
-			#nonwindowed_SNR = nonwindowed_SNR[:, :, chop_time:]
-			#n_windows = (nonwindowed_SNR.shape[-1] - window_size)//stride +1
 			print("n_windows:", n_windows)
-			#windowed_SNR = np.empty((len(ifos), n_templates, n_windows, window_size), dtype=np.float32)
 			start = time.time()
-		
-			#for ifo in range(len(ifos)):
-			#	windowed_SNR[ifo] = np.array(make_windows_2d(nonwindowed_SNR[ifo, :, :], window_size, stride))
-			window_time += time.time() - start
 				
 		else:
 			chop_index = 0
 			chop_time = 0
 
-			start = time.time()
-			#for ifo in range(len(ifos)):
-			#	windowed_SNR[ifo] = np.array(make_windows_2d(nonwindowed_SNR[ifo, :, :], window_size, stride))
-			window_time += time.time() - start
-
 		
-		#Now we do the zerolag stuff
-		
-		#to make things easier, let's add some zeroes to the nonwindowed SNR if there's only one ifo
+		#Now we compute the zerolags		
+		#for now, let's add some zeroes to the nonwindowed SNR if there's only one ifo
+		#TODO: handle arbitrary ifos
 
 		if len(ifos) == 1:
 			if ifos[0] == "L1":
@@ -620,8 +521,6 @@ for i in range(n_batches):
 				if gps_time > valid_times[j] and gps_time < valid_times[j] + slice_duration:
 					delete_time = int(gps_time - valid_times[j] - chop_time//2048)
 					if delete_time > 0:
-						#to handle chopped segments, i.e. if the event is before the chop time, we still need to zero it for
-						#timeslide purposes.
 						zerolags[delete_time] = -1
 					print("deleted zerolag at time", delete_time)
 					print("Actual GPS time of deleted event:", gps_time)
@@ -631,7 +530,6 @@ for i in range(n_batches):
 			print("deleted zerolags:", deleted_zerolags)
 
 		peak_pos_array = []
-		#windows, detectors, templates
 		for k in range(0, nonwindowed_SNR.shape[2]-2048+stride, stride):
 
 			peak_pos_array.append(np.argmax(nonwindowed_SNR[:,: , k:k+2048], axis = 2))
@@ -656,15 +554,12 @@ for i in range(n_batches):
 				
 			# Check this zerolag is valid
 			if k[0][0] == -1:
-				#print(f"Zerolag {key_i} is invalid")
 				continue
-			
 			
 			#process the zerolags
 
 			#TODO: iterate through the different unique sample rates, like in background_timeslides.py.
-			#as a quick solution, just append the needed samples to SNR_send and delta_t_send.
-			#then when we receive them 
+			#as a temporary solution, just append the needed samples to SNR_send and delta_t_send.
 
 			primary_det = np.argmax(k[0][:2])
 			primary_det_pos = k[0][3+primary_det]
@@ -685,7 +580,6 @@ for i in range(n_batches):
 
 
 			#this is where we normally load primary preds, instead we need to prepare to send the corresponding SNR to triton
-
 			#convert primary_det_samples windows to indicies of nonwindowed_SNR
 
 			for p in primary_det_samples:
@@ -707,11 +601,8 @@ for i in range(n_batches):
 		total_batches = 0
 
 		#ready to send the SNR to triton
-
 		#each element in SNR_send has shape (2, window_size)
 		#so SNR_send as a whole will have shape (zerolags,2,window_size)
-
-		#if, instead we concatenate it will have shape (2, zerolags, window_size)
 		
 		#forcing float 32 just in case
 		SNR_send = np.array(SNR_send, dtype=np.float32)
@@ -762,11 +653,8 @@ for i in range(n_batches):
 		print("sending time:", time.time()- predstart)
 		start = time.time()
 
-		#del windowed_SNR, y
-
 		print("total batches sent:", total_batches)
 		all_responses = []
-
 
 		count = 0
 		while True:
@@ -788,9 +676,8 @@ for i in range(n_batches):
 			#print(all_responses[0])
 
 		start = time.time()
-		#newshape
-		#should have shape (n_templates, n_windows, det_output_shape)
-		#NEW SHAPE! since we're only sending the top, it should have an arbitrary shape
+
+		#Since we're only sending the top, it should have an arbitrary shape
 		#something like n_zerolags, det_output_shape
 
 		if n_gpus == 1:
@@ -828,10 +715,8 @@ for i in range(n_batches):
 
 		if len(ifos) == 1:
 			#fill delta_t array with ones.
-			#TODO: investigate (briefly) the effect of 
+			#TODO: investigate the effect of different fill values.
 			delta_t_send.fill(1.0)
-
-			#need to wipe the predbuf as well for the missing ifo
 
 			#TODO: these fill values may change depending on requirements.
 			#if you use a multiply combine layer, use a fill value of 1.0, else a value of 0.0 should work.
@@ -845,10 +730,7 @@ for i in range(n_batches):
 		combined_preds = combiner.predict([predbuf[:, :det_output_shape], predbuf[:, det_output_shape:], delta_t_send],
 																	verbose = 2, batch_size = 1024)
 		
-		#TODO: need to split up the predictions by a different amount if we have multiple inference rates.
-		#18 needs to be sum(inference_rates) + 2*len(inference_rates)
 		#we then split up these pred timeseries into [0:inference_rate[0]], [inference_rate[0]:inference_rate[0]+inference_rate[1]], etc.
-		#MAKE SURE EVERYTHING IS IN A DICTIONARY!
 
 		combined_preds = combined_preds.reshape(-1, 1, rate_sum)
 		print("combined preds shape: {}".format(combined_preds.shape))
@@ -870,19 +752,6 @@ for i in range(n_batches):
 			for idx, rate in enumerate(inference_rates):
 				ma_prediction = np.max(np.convolve(pred_arrays[rate]["preds"][true_idx][0], ma_kernels[window_sizes[idx]], mode = 'valid'))
 				zerolags[key_k][0][6+idx] = ma_prediction
-			#ma_prediction_16hz = np.max(np.convolve(combined_preds[true_idx][0], f16, mode = 'valid'))
-			#ma_prediction_16hz_12 = np.max(np.convolve(combined_preds[true_idx][0], f12, mode = 'valid'))
-			#ma_prediction_16hz_8 = np.max(np.convolve(combined_preds[true_idx][0], f8, mode = 'valid'))
-			#ma_prediction_16hz_4 = np.max(np.convolve(combined_preds[true_idx][0], f4, mode = 'valid'))
-
-			#pred_stuff = np.array([ma_prediction_16hz, ma_prediction_16hz_12, ma_prediction_16hz_8, ma_prediction_16hz_4,
-			#								np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1]),
-			#								np.max(combined_preds[true_idx][0][1:-1]), np.max(combined_preds[true_idx][0][1:-1])])
-
-
-			#zerolags[key_k][0][-8:] = pred_stuff
-
-
 			true_idx += 1
 
 		zerolags[:,0,5] += template_start_idx
@@ -906,27 +775,20 @@ for i in range(n_batches):
 
 	gc.collect()
 	
-	#print("getting memory snapshot")
-	#snapshot = tracemalloc.take_snapshot()
-	#display_top(snapshot, limit = 20)
-
-
-
 print("template loading took", template_time, "seconds")
 print("noise loading took", noise_time, "seconds")
 print("strain generation took", strain_time, "seconds")
 print("matched filtering took", mf_time, "seconds")
 print("windowing took", window_time, "seconds")
 print("prediction took", pred_time, "seconds")
-print("timesliding took", timeslide_time, "seconds")
 print("reshaping took", reshape_time, "seconds")
 print("waiting took", wait_time, "seconds")
 
-total_time = template_time + noise_time + mf_time + window_time + strain_time + pred_time + timeslide_time + reshape_time + wait_time
+total_time = template_time + noise_time + mf_time + window_time + strain_time + pred_time + reshape_time + wait_time
 
 print("total time:", total_time, "seconds")
 
-print("actual run would take {} hours".format((total_noise_segments/n_noise_segments) *total_time/3600))
+#print("actual run would take {} hours".format((total_noise_segments/n_noise_segments) *total_time/3600))
 
 #write a file to the status folder to indicate that this job is done
 with open(os.path.join(statusfolder, "worker_{}.txt".format(worker_id)), "w") as f:

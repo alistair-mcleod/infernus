@@ -5,4 +5,4 @@
 
 infernus_dir="/fred/oz016/alistair/infernus"
 
-python $infernus_dir/infernus/megacleanup.py --savedir=$1 --jsonfile=$2
+python $infernus_dir/infernus/cleanup.py --savedir=$1 --jsonfile=$2

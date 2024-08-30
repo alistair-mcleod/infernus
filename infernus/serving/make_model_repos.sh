@@ -34,7 +34,7 @@ echo $new_tf_model
 
 echo "loading and splitting tensorflow model"
 
-python ${infernus_dir}/infernus/serving/convert_model/save_tf_model_a.py $tf_model $new_tf_model
+python ${infernus_dir}/infernus/serving/convert_model/save_tf_model.py $tf_model $new_tf_model
 
 #convert models to onnx
 python -m tf2onnx.convert --saved-model ${new_tf_model}_h --output temp_h.onnx

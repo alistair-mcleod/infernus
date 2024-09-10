@@ -11,12 +11,11 @@ infernus/serving/*/*
 /*.sh 
 **.json
 **.pbtxt
+runs/*
 
-!./share/*
+!./share/**
+!share/*.json
 
-# Serving dummy folder test files
-!./infernus/serving/dummy/*.ipynb
-!./infernus/serving/dummy/model_repository/**.onnx
 
 # Ignore temporary TensorFlow models generated in the model conversion folder
 ./infernus/serving/convert_model/*/

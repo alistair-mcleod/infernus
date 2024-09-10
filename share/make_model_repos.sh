@@ -1,11 +1,15 @@
 #!/bin/bash
 
-infernus_dir='/fred/oz016/alistair/infernus'
+#infernus_dir='/fred/oz016/alistair/infernus'
+
 
 source ~/.bashrc
+#infernus_dir=${INFERNUS_DIR}
 
 jsonfile=$1
 
+infernus_dir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['infernus_dir'])")
+echo $infernus_dir
 #get directory from json file
 
 savedir=$(cat $jsonfile | grep -F '"save_dir": ' | sed -e 's/"save_dir": //' | tr -d '",')
@@ -33,7 +37,7 @@ new_tf_model=$(pwd)/$new_tf_model
 echo $new_tf_model
 
 echo "loading and splitting tensorflow model"
-
+echo yup
 python ${infernus_dir}/infernus/serving/convert_model/save_tf_model.py $tf_model $new_tf_model
 
 #convert models to onnx

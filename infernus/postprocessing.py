@@ -17,7 +17,6 @@ from GWSamplegen.noise_utils import combine_seg_list, get_valid_noise_times
 from GWSamplegen.waveform_utils import t_at_f
 from scipy.optimize import minimize
 from scipy.stats import norm, skewnorm, t
-import matplotlib.pyplot as plt
 import h5py
 from importlib import resources as impresources
 from GWSamplegen import segments
@@ -67,8 +66,7 @@ def log_dNdm1dm2ds1ds2dz_mine(z, logprob_m1m2, logprob_spin, selection, log_dVdz
 
 
 def get_V(z, logprob_mass, logprob_spin, selection, N_draw, p_draw, log_dVdz):
-    ''' Convienient function that returns log_VT, log_err_VT, and N_eff '''
-    #TODO: rename stuff to just V, not VT. Also fix log_sig
+    ''' Convienient function that returns log_V, log_err_V, and N_eff '''
     
     # Calculate V
     log_dN = log_dNdm1dm2ds1ds2dz_mine(z, logprob_mass, logprob_spin, selection, log_dVdz)
@@ -136,13 +134,10 @@ def pdf_to_cdf_arbitrary(pdf):
 
 
 def lognorm_fit(data, method = 'MSE'):
-    #p, bins, _ = plt.hist(data, bins = 1000, density=True, cumulative=-1)
 
     p, bins = np.histogram(data, bins = 1000, density = True)
     p = p[::-1].cumsum()[::-1]
     p/=p[0]
-
-    #plt.clf()
 
     def lognorm_fit_func(params):
         mean, std = params
@@ -230,11 +225,6 @@ def lognorm_fit_constrained(data, upper = 1e-4, lower = 1e-6, method = 'MSE'):
 
     p_upper = np.argmin(np.abs(p - upper))
     p_lower = np.argmin(np.abs(p - lower))
-    #p_upper = -10
-
-    #plt.clf()
-    #print(p_upper)
-    #print(len(p) - p_lower)
 
     def lognorm_fit_func_c(params):
         mean, std = params
@@ -245,10 +235,6 @@ def lognorm_fit_constrained(data, upper = 1e-4, lower = 1e-6, method = 'MSE'):
     x0 = np.array([np.mean(data), np.std(data)])
     
     res = minimize(lognorm_fit_func_c, x0, method = 'Nelder-Mead')
-
-    #plot the fit
-    #plt.plot(bins[p_upper:-2], np.log10(p[p_upper:-1]), label = 'data')
-    #plt.plot(bins[p_upper:-2], np.log10(pdf_to_cdf_arbitrary(norm.pdf(bins[:-1], res.x[0], res.x[1]))[p_upper:-1]), label = 'fit')
 
     return res.x
 
@@ -279,23 +265,12 @@ def preds_to_far_constrained(bg,preds, upper = 1e-3, lower = 1e-7, extrapolate =
 
 
 
- 
-
-
-
 def get_O3_week(week):
     """Returns the start and end times of the given week of O3."""
     start = 1238166018 + (week-1)*60*60*24*7
     end = start + 60*60*24*7
     return start, end
 
-#duration is duration of noise segments, duration - end_cutoff is the amount of ignored data at the end of each segment
-
-
-
-
-
-#TODO: make this function work for any observing run, and in any installation.
 def get_inj_data(week, noise_dir, background_stats, injection_file, mdc_file, merge_target = 6,
                  duration = 1024, start_cutoff = 100, end_cutoff = 1000, f_lower = 30, 
                  pipelines = ["pycbc_hyperbank", "mbta", "gstlal"],
@@ -363,9 +338,9 @@ def get_inj_data(week, noise_dir, background_stats, injection_file, mdc_file, me
         ifo_1 = impresources.files(segments).joinpath(ifo_1)
         ifo_2 = impresources.files(segments).joinpath(ifo_2)
         segs, h1, l1 = combine_seg_list(ifo_1,ifo_2,start,end, min_duration=duration)
-        print("fetched segment files from GWSamplegen")
+        #print("fetched segment files from GWSamplegen")
     except:
-        print("Looking for ifo files elsewhere")
+        #print("Looking for ifo files elsewhere")
         segs, h1, l1 = combine_seg_list(ifo_1,ifo_2,start,end, min_duration=duration)
 
 
@@ -508,10 +483,12 @@ def get_inj_data(week, noise_dir, background_stats, injection_file, mdc_file, me
     return N_draw, mask, stmnew, nn_preds, injs, d
 
 
+def load_ifar_data(inj_file, bg_stats, merge_target, mdc_file, 
+        has_injections = False, noise_dir = None, week = None, extrapolate = False):
+    #Load a background file, an injection/non-injection file, and compute the FARs for the non-injection data.
+    #Getting the non-injection data from an injection run requires a noise directory, an injection file and a week number.
 
-def load_ifar_data(inj_file, bg_stats, merge_target, has_injections = False, noise_dir = None, week = None, extrapolate = False,
-                    mdc_file = "/fred/oz016/alistair/infernus/notebooks/gwtc3/endo3_bnspop-LIGO-T2100113-v12-1238166018-15843600.hdf5"):
-    small_injs = np.load(inj_file, allow_pickle=True).squeeze()
+    inj_array = np.load(inj_file, allow_pickle=True).squeeze()
 
     #we can use either injection runs or noninjection runs for this.
     if has_injections:
@@ -521,11 +498,11 @@ def load_ifar_data(inj_file, bg_stats, merge_target, has_injections = False, noi
         not_injs = np.concatenate((zls-6, zls-5, zls-4, zls-3, zls-2, zls-1, zls, zls+1, zls+2, zls+3, zls+4, zls+5, zls+6))
         not_injs = np.unique(np.sort(not_injs))
 
-        noninjm = small_injs[~np.isin(np.arange(len(small_injs)), not_injs)][:,merge_target]
+        noninjm = inj_array[~np.isin(np.arange(len(inj_array)), not_injs)][:,merge_target]
 
     else:
         print("using noninj run, no zls needed")
-        noninjm = small_injs[:,merge_target]
+        noninjm = inj_array[:,merge_target]
         stat_data = np.load(bg_stats)
         stat_data = stat_data.reshape(-1,11)
         stat_data = stat_data[stat_data[:,0] != -1]
@@ -533,11 +510,9 @@ def load_ifar_data(inj_file, bg_stats, merge_target, has_injections = False, noi
 
     not_injs_fars = preds_to_far(stat_data[:,merge_target - 3], noninjm, extrapolate = extrapolate)
 
+    #TODO: make the bin limit an argument
     far_bins = np.geomspace(1e-7,1,100)
-
     vals, bins = np.histogram(not_injs_fars, bins = far_bins)
-
-    #len(not_injs_fars) is the length of the foreground
 
     return bins[:-1], vals, far_bins, len(not_injs_fars)
 

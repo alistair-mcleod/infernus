@@ -1,0 +1,36 @@
+[project]
+name = "infernus"
+version = "0.1.0"
+authors = [
+	{name = "Alistair McLeod", email = "alistair.mcleod@research.uwa.edu.au"},
+	{name = "Damon Beveridge", email = "damon.beveridge@research.uwa.edu.au"},
+	]
+description = "A package for running searches in gravitational wave SNR time series with neural networks."
+dependencies = [
+	"astropy >= 5.3.1",
+	"bilby >= 2.1.2",
+	"gwpy >= 3.0.8",
+	"h5py >= 3.9.0",
+	"numpy >= 1.24.0",
+	"pycbc >= 2.2.0",
+    "onnx >= 1.12.0",
+    "tf2onnx >= 1.15.1",
+	"gwpy >= 3.0.8",
+	"keras >= 2.11.0",
+	"tritonclient >= 2.37.0.9383150",
+	"scipy >= 1.11.1",
+]
+requires-python = ">= 3.10"
+readme = "README.md"
+license = {text = "MIT License"}
+
+
+
+[tool.setuptools]
+packages = ['infernus', 'infernus.serving', 'infernus.triggering', 'infernus.serving.convert_model']
+include-package-data = true
+
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

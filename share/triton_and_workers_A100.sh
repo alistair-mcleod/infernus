@@ -5,6 +5,8 @@
 #SBATCH --time=60:00:00
 #SBATCH --tmp=50GB
 
+#Worker submission script, designed to run on the NVIDIA A100 nodes on the OzStar supercomputer.
+
 jsonfile=$2
 
 echo $jsonfile

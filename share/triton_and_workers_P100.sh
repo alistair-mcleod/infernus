@@ -5,17 +5,8 @@
 #SBATCH --time=50:00:00
 #SBATCH --tmp=50GB
 
-#inj, 1 week: 70 GB, 4 tasks
-#BG,  1 week: 120 GB, 2 cleanups, 7 tasks
-#NOTE: the V100s on john108 and john109 can screw up the timing of the cleanup jobs. i.e. the GPUs will be much faster than in the P100 nodes.
-
-#magic job array sizes: ceil(bank size / (array size * n_workers)) % templates per batch 
-#this is the number of templates in the last batch, and should ideally be maximised. 
-#for my bank, 65 and 43 are the best numbers. 86 is even better, but there aren't 86 A100s.
-
-#notes from injtest: 2 workers use ~10 GB memory total, and GPU usage was almost nothing (like 10%)
-#can definitely run with 12 workers in a job array of 43, with ~8 GB memory per worker (ie 96 GB total). need to use 14 CPUs for this.
-
+#Worker submission script, designed to run on the NVIDIA P100 nodes on the OzStar supercomputer.
+#More generally, this script will run with 2 GPUs per worker.
 
 jsonfile=$2
 
@@ -23,28 +14,30 @@ echo $jsonfile
 
 
 #number of workers. this is the number of workers sharing the same GPU(s), and should be at least 2. Can use more if the GPU is being underutilised.
-n_workers=$(cat $jsonfile | grep -F '"n_workers": ' | sed -e 's/"n_workers": //' | tr -d '",')
+n_workers=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['n_workers'])")
 n_workers=$((n_workers))
 echo n_workers: $n_workers
 
-#number of cleanup jobs per worker. 1 should be enough, unless you're doing lots (>100) of timeslides
-n_cleanups=$(cat $jsonfile | grep -F '"n_cleanups": ' | sed -e 's/"n_cleanups": //' | tr -d '",')
+#number of cleanup jobs per worker.
+n_cleanups=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['n_cleanups'])")
 n_cleanups=$((n_cleanups))
 echo n_cleanups: $n_cleanups
 
-injfile=$(cat $jsonfile | grep -F '"injfile": ' | sed -e 's/"injfile": //' | tr -d '",')
+injfile=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['injfile'])")
 
-
-array=$(cat $jsonfile | grep -F '"n_array_tasks": ' | sed -e 's/"n_array_tasks": //' | tr -d '",')
+array=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['n_array_tasks'])")
 #totaljobs=$SLURM_ARRAY_TASK_COUNT
 totaljobs=$((array))
 echo totaljobs: $totaljobs
 
-cd /fred/oz016/alistair/infernus
+infernus_dir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['infernus_dir'])")
+echo $infernus_dir
+cd $infernus_dir
 
 #get slurm job ID
 jobid=$SLURM_ARRAY_JOB_ID
 
+#load the modules and activate the virtual environment
 ml gcc/11.3.0 openmpi/4.1.4 python/3.10.4 cudnn/8.4.1.50-cuda-11.7.0
 ml apptainer
 
@@ -54,9 +47,7 @@ source /fred/oz016/alistair/nt_310/bin/activate
 node=$SLURM_JOB_NODELIST
 echo $node
 
-#set a port based on the array ID. needs to step by 6 because each triton server needs 3 ports
-port=$((20100 + $SLURM_ARRAY_TASK_ID * 6))
-port2=$((port+3))
+#socket_finder.py finds a set of available consecutive ports.
 port=$(python ./infernus/socket_finder.py)
 
 echo found sockets
@@ -104,20 +95,17 @@ do
         --totaljobs=$totaljobs --node=$node --port=$port --argsfile=$jsonfile --ngpus=$CUDA_VISIBLE_DEVS > triton_logs/${SLURM_JOB_NAME}_worker_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
         sleep 1
 
-        echo "injfile is none, starting background cleanup job(s)"
+        echo "injfile is none, starting background timeslide job(s)"
         for j in $(seq 0 $((n_cleanups-1)))
         do
             echo starting cleanup worker $j
             echo writing to file triton_logs/cleanup_${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}_${i}_${j}.log
 
-            #python infernus/cleanup_multitrig2_faster.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers \
-            #    --totaljobs=$totaljobs --cleanupid=$j --argsfile=$jsonfile --totalcleanups=$n_cleanups > triton_logs/${SLURM_JOB_NAME}_cleanup_${SLURM_ARRAY_TASK_ID}_${i}_${j}.log &
-
             python infernus/background_timeslides.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers \
                 --totaljobs=$totaljobs --cleanupid=$j --argsfile=$jsonfile --totalcleanups=$n_cleanups > triton_logs/${SLURM_JOB_NAME}_cleanup_${SLURM_ARRAY_TASK_ID}_${i}_${j}.log 2>&1 &
         done
     else
-        echo "injfile is not none, not starting cleanup job(s)"
+        echo "injfile is not none, not starting timeslide job(s)"
         python infernus/SNR_serving_triton_inj.py --jobindex=$SLURM_ARRAY_TASK_ID --workerid=$i --totalworkers=$n_workers \
         --totaljobs=$totaljobs --node=$node --port=$port --argsfile=$jsonfile --ngpus=$CUDA_VISIBLE_DEVS > triton_logs/${SLURM_JOB_NAME}_worker_${SLURM_ARRAY_TASK_ID}_$i.log 2>&1 &
         sleep 1
@@ -150,7 +138,6 @@ do
         
             rm triton_logs/${SLURM_JOB_NAME}_worker_${SLURM_ARRAY_TASK_ID}_$i.log
         done
-        #remove this log file
         rm triton_logs/${SLURM_JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log
         sleep 1
         exit 0
@@ -158,8 +145,6 @@ do
 
     sleep 10
 done
-
-echo "shut down triton server, waiting for cleanup jobs to finish"
 
 wait
 echo "All tasks are closed. Exiting job."

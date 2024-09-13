@@ -22,7 +22,9 @@ from importlib import resources as impresources
 from GWSamplegen import segments
 
 
-#postprocessing for computing sensitive volume
+#Postprocessing for computing sensitive volume.
+#These sensitive volume functions were adapted from the code for the GWTC-3 analysis, which can be found at
+#https://zenodo.org/records/7890437 
 
 def logdiffexp(x, y):
     ''' Evaluate log(exp(x) - exp(y)) '''

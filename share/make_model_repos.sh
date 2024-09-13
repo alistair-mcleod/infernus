@@ -12,16 +12,16 @@ infernus_dir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys
 echo $infernus_dir
 #get directory from json file
 
-savedir=$(cat $jsonfile | grep -F '"save_dir": ' | sed -e 's/"save_dir": //' | tr -d '",')
+savedir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['save_dir'])")
 
 #get tensorflow model file path from json file
 
-tf_model=$(cat $jsonfile | grep -F '"tf_model": ' | sed -e 's/"tf_model": //' | tr -d '",')
+tf_model=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['tf_model'])")
 
 echo $tf_model
 #get batch file from json file
 
-batch_size=$(cat $jsonfile | grep -F '"batch_size": ' | sed -e 's/"batch_size": //' | tr -d '",')
+batch_size=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['batch_size'])")
 
 mkdir -p $savedir/model_repositories/repo_1
 mkdir -p $savedir/model_repositories/repo_2

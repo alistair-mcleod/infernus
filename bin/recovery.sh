@@ -1,4 +1,5 @@
 #! /bin/bash
+
 set -e
 
 jsonfile=$1

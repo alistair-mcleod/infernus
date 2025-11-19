@@ -19,17 +19,17 @@ else
 fi
 
 #add user input to confirm that they want to install into the current environment
-read -p "Do you want to install Infernus into the current environment? (y/n): " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-	echo "Installation halted. Please ensure you have activated a Python virtual environment for installing Infernus."
-	exit 1
-fi
+# read -p "Do you want to install Infernus into the current environment? (y/n): " confirm
+# if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+# 	echo "Installation halted. Please ensure you have activated a Python virtual environment for installing Infernus."
+# 	exit 1
+# fi
 
-pip install .
+# pip install .
 
 #check if GWSamplegen is already installed
-isInstalled=$(pip show GWSamplegen | grep -c "Name: GWSamplegen")
-
+#isInstalled=$(pip show GWSamplegen | grep -c "Name: GWSamplegen")
+isInstalled=0
 if [[ $isInstalled -eq 0 ]]; then
 	echo "GWSamplegen is not installed. It will be installed into the parent directory of Infernus."
 	read -p "Do you want to install GWSamplegen into $(dirname $INFERNUS_DIR)/GWSamplegen? (y/n): " confirm
@@ -42,7 +42,7 @@ if [[ $isInstalled -eq 0 ]]; then
 	#put it in the parent directory of the current working directory
 	git clone git@github.com:alistair-mcleod/GWSamplegen.git ../GWSamplegen
 	cd ../GWSamplegen
-	pip install .
+	#pip install .
 	cd "${INFERNUS_DIR}"
 fi
 

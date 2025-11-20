@@ -35,6 +35,7 @@ from infernus.triggering.zerolags import get_zerolags
 parser = argparse.ArgumentParser()
 parser.add_argument('--jobindex', type=int,default=0)
 parser.add_argument('--workerid', type=int, default=0)
+parser.add_argument('--totalworkers', type=int, default=1)
 parser.add_argument('--totaljobs', type=int, default=1)
 parser.add_argument('--argsfile', type=str, default=None)
 parser.add_argument('--streamline', type = int, default = None)

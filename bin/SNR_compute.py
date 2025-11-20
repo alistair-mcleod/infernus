@@ -6,9 +6,6 @@ import argparse
 import gc
 import json
 import h5py
-from queue import Queue
-from functools import partial
-import tritonclient.grpc as grpcclient
 from GWSamplegen.noise_utils import load_psd, get_valid_noise_times, load_gps_blacklist, get_valid_noise_times_from_segments, get_data_from_OzStar
 from GWSamplegen.waveform_utils import load_pycbc_templates, chirp_mass, select_approximant, t_at_f, maximum_f_lower
 from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq, numpy_matched_filter
@@ -38,11 +35,7 @@ from infernus.triggering.zerolags import get_zerolags
 parser = argparse.ArgumentParser()
 parser.add_argument('--jobindex', type=int,default=0)
 parser.add_argument('--workerid', type=int, default=0)
-parser.add_argument('--totalworkers', type=int, default=1)
 parser.add_argument('--totaljobs', type=int, default=1)
-#parser.add_argument('--node', type=str, default=None)
-#parser.add_argument('--port', type=int, default=8001)
-parser.add_argument('--ngpus', type=int, default=1)
 parser.add_argument('--argsfile', type=str, default=None)
 parser.add_argument('--streamline', type = int, default = None)
 parser.add_argument('--injindex', type = int, default = -1)
@@ -98,6 +91,8 @@ def load_pycbc_templates_from_hdf(hdf_file):
 
 args = json.load(open(argsfile, "r"))
 noise_dir = args["noise_dir"]
+n_cpus = args["ntasks"]
+print("number of CPUs:", n_cpus)
 
 
 maxnoisesegs = args["max_noise_segments"]
@@ -177,6 +172,42 @@ try:
 	print("inference rate is", inference_rate)
 except:
 	print("no inference rate specified, using default of 16 Hz")
+
+try:
+	both_detectors_above_thresh = args["both_detectors_above_thresh"]
+except:
+	both_detectors_above_thresh = False
+print("both detectors above threshold flag set to", both_detectors_above_thresh)
+
+if "bin" in args:
+	bin = args["bin"]
+	print("using bin:", bin)
+else:
+	bin = None
+
+try:
+	injection_SNR_dir = args["injection_SNR_dir"]
+	print("using injection SNR directory:", injection_SNR_dir, ". Make sure the SNR files match this run's configuration.")
+except:
+	injection_SNR_dir = None
+
+if injection_SNR_dir is not None and injfile not in [None, "noninj", "real"]:
+	#we're doing an injection run with precomputed SNRs. Check if the SNRs exist first
+	#injection_SNR_dir = os.path.join(injection_SNR_dir, bin)
+	if inj_index is not None:
+		injection_SNR_dir = os.path.join(injection_SNR_dir, "inj_{}".format(inj_index))
+		print("using injection SNR directory:", injection_SNR_dir)
+	if not os.path.exists(os.path.join(injection_SNR_dir, "timeslides_{}_0.npy".format(job_id))) or not os.path.exists(os.path.join(injection_SNR_dir, "SNR_array_{}_0.npy".format(job_id))):
+		print("injection SNR files not found, we will need to generate them.")
+
+		#generate the directory just in case
+		os.makedirs(injection_SNR_dir, exist_ok=True)
+		myfolder = injection_SNR_dir
+
+	else:
+		print("injection SNR files found, we will use them.")
+		sys.exit(0)
+
 
 if injfile == "None":
 	injfile = None
@@ -341,6 +372,9 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 	else:
 		eccentricity = np.zeros(n_injs)
 
+	#This is necessary for migration to numpy V2, as float32 runs into an overflow
+	mass1 = np.array(mass1, dtype = np.float64)
+	mass2 = np.array(mass2, dtype = np.float64)
 	startgps = []
 	for i in range(n_injs):
 		startgps.append(np.floor(gps[i] - t_at_f(mass1[i], mass2[i], f_lower)))
@@ -419,7 +453,8 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 		buffer_length = 2048,
 		overlap = int(0.2*2048),
 		num_trigs = 1,
-		chop_time = chop_idx, #TODO: replace with chop_idx eventually
+		chop_time = chop_idx,
+		both_detectors_above_thresh = both_detectors_above_thresh
 	)
 
 	zerolags = np.array(zerolags)
@@ -705,9 +740,7 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 					start_idx = end_idx - len(detector_signal)
 				print(start_idx, end_idx)
 				#print(len(detector_signal), end_idx)
-				noise[ifos.index(ifo),end_idx - len(detector_signal)+offset:end_idx+offset] += detector_signal #*2 #NOTE: NEED TO UNDO DISTANCE REDUCTION AFTER TESTING!
-
-			#print("Note: for testing purposes, the injections have been doubled in amplitude.")
+				noise[ifos.index(ifo),end_idx - len(detector_signal)+offset:end_idx+offset] += detector_signal
 
 
 strain = {}

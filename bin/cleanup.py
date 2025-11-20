@@ -74,26 +74,29 @@ max_array = 2048
 missing_segments = sorted(set(i % max_array for i in missing_segments))
 
 if len(missing_segments) > 0:
-    
-    missing_ranges = []
-    start = missing_segments[0]
-    end = start
-    for i in range(1, len(missing_segments)):
-        if missing_segments[i] == end + 1:
-            end = missing_segments[i]
-        else:
-            if start == end:
-                missing_ranges.append(str(start))
-            else:
-                missing_ranges.append(f"{start}-{end}")
-            start = missing_segments[i]
-            end = start
-    if start == end:
-        missing_ranges.append(str(start))
-    else:
-        missing_ranges.append(f"{start}-{end+1}")
-    missing = '"' + ",".join(missing_ranges) + '"'
-    print("bash ${INFERNUS_DIR}/bin/recovery.sh {} {}".format(argsfile, missing))
+
+	missing_ranges = []
+	start = missing_segments[0]
+	end = start
+	for i in range(1, len(missing_segments)):
+		if missing_segments[i] == end + 1:
+			end = missing_segments[i]
+		else:
+			if start == end:
+				missing_ranges.append(str(start))
+			else:
+				missing_ranges.append(f"{start}-{end}")
+			start = missing_segments[i]
+			end = start
+	if start == end:
+		missing_ranges.append(str(start))
+	else:
+		missing_ranges.append(f"{start}-{end+1}")
+	missing = '"' + ",".join(missing_ranges) + '"'
+	print("bash ${{INFERNUS_DIR}}/bin/recovery.sh {} {}".format(argsfile, missing))
+	print("missing files in bash format:", missing)
+	print("Exiting")
+	exit(1)
 
 #if we got here, all files are present, we can merge
 

@@ -155,6 +155,11 @@ if "bin" in json_args:
 	print("Using new style of model directory")
 else:
 	new_style = False
+if "injection_SNR_dir" in json_args and injfile not in [None, "noninj", "real"]:
+	injection_SNR_dir = json_args["injection_SNR_dir"]
+	print("Loading injection SNRs from ", injection_SNR_dir)
+else:
+	injection_SNR_dir = None
 
 if args.injindex >= 0:
 	inj_index = args.injindex
@@ -225,7 +230,13 @@ def initialise_server(
 if streamline:
 	myfolder = save_dir
 else:
-	myfolder = os.environ["JOBFS"]
+	if injection_SNR_dir is not None:
+		myfolder = injection_SNR_dir
+		if args.injindex >= 0:
+			myfolder = os.path.join(myfolder, "inj_{}".format(inj_index))
+			print("using injection SNR directory:", myfolder)
+	else:
+		myfolder = os.environ["JOBFS"]
 
 
 light_travel_time = sample_rate //100

@@ -4,6 +4,7 @@
 #SBATCH --time=100:00:00
 
 #infernus_dir="/fred/oz016/alistair/infernus"
-infernus_dir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['inferns_dir'])")
+jsonfile=$2
+infernus_dir=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['infernus_dir'])")
 
 python $infernus_dir/infernus/cleanup.py --savedir=$1 --jsonfile=$2

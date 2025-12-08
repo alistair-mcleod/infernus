@@ -61,49 +61,59 @@ val_dir=$(jq -r '.project_dir' $validation_args)
 test_dir=$(jq -r '.project_dir' $testing_args)
 #check if SNR_abs.npy exists in each directory
 
-# if [ -f "$train_dir/SNR_abs.npy" ]; then
-# 	echo "Training dataset already exists, skipping generation"
-# else
-# 	echo "Training dataset does not exist, generating"
-# 	training=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $training_args) 
-# 	echo "SUBMITTED TRAINING JOB"
-# 	echo "Output: $training"
-# 	training_id=$(echo $training | awk '{print $NF}')
-# 	echo
-# 	echo "Training dataset job ID: $training_id"
-# 	echo
-# 	echo
-# fi
+if [ -f "$train_dir/SNR_abs.npy" ]; then
+	echo "Training dataset already exists, skipping generation"
+else
+	echo "Training dataset does not exist, generating"
+	training=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $training_args) 
+	echo "SUBMITTED TRAINING JOB"
+	echo "Output: $training"
+	training_id=$(echo $training | awk '{print $NF}')
+	echo
+	echo "Training dataset job ID: $training_id"
+	echo
+	echo
+fi
 
-# if [ -f "$val_dir/SNR_abs.npy" ]; then
-# 	echo "Validation dataset already exists, skipping generation"
-# else
-# 	echo "Validation dataset does not exist, generating"
-# 	validation=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $validation_args)
-# 	echo "SUBMITTED VALIDATION JOB"
-# 	echo "Output: $validation"
-# 	validation_id=$(echo $validation | awk '{print $NF}')
-# 	echo
-# 	echo "Validation dataset job ID: $validation_id"
-# 	echo
-# 	echo
-# fi
+if [ -f "$val_dir/SNR_abs.npy" ]; then
+	echo "Validation dataset already exists, skipping generation"
+else
+	echo "Validation dataset does not exist, generating"
+	validation=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $validation_args)
+	echo "SUBMITTED VALIDATION JOB"
+	echo "Output: $validation"
+	validation_id=$(echo $validation | awk '{print $NF}')
+	echo
+	echo "Validation dataset job ID: $validation_id"
+	echo
+	echo
+fi
 
-# if [ -f "$test_dir/SNR_abs.npy" ]; then
-# 	echo "Testing dataset already exists, skipping generation"
-# else
-# 	echo "Testing dataset does not exist, generating"
-# 	testing=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $testing_args)
-# 	echo "SUBMITTED TESTING JOB"
-# 	echo "Output: $testing"
+if [ -f "$test_dir/SNR_abs.npy" ]; then
+	echo "Testing dataset already exists, skipping generation"
+else
+	echo "Testing dataset does not exist, generating"
+	testing=$(bash ${GWSAMPLEGEN_DIR}/share/generate_configs_workflow.sh $testing_args)
+	echo "SUBMITTED TESTING JOB"
+	echo "Output: $testing"
 
-# 	testing_id=$(echo $testing | awk '{print $NF}')
-# 	echo
-# 	echo "Testing dataset job ID: $testing_id"
-# fi
+	testing_id=$(echo $testing | awk '{print $NF}')
+	echo
+	echo "Testing dataset job ID: $testing_id"
+fi
 
-#sleep 5
+sleep 5
 
+cancel_cmd="scancel "
+if [ -n "$training_id" ]; then
+	cancel_cmd+="${training_id} "
+fi
+if [ -n "$validation_id" ]; then
+	cancel_cmd+="${validation_id} "
+fi
+if [ -n "$testing_id" ]; then
+	cancel_cmd+="${testing_id} "
+fi
 
 ##########################################################################
 #--------------Running tuning (if needed) and then training--------------#
@@ -189,9 +199,9 @@ array=$(echo $ret | awk '{print $NF}')
 
 echo "array: $array"
 
-tasks=$(jq -r '.ntasks' ${inj_args})
-mem=$(jq -r '.mem' ${inj_args})
-num_triggers=$(jq -r '.num_triggers' ${inj_args})
+tasks=$(jq -r '.ntasks' ${real_event_args})
+mem=$(jq -r '.mem' ${real_event_args})
+num_triggers=$(jq -r '.num_triggers' ${real_event_args})
 temp_size=$(( ${num_triggers} * 3 ))
 echo "real event cpus: $tasks"
 #check if $prep_repos is not empty

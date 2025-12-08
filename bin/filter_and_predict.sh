@@ -20,7 +20,7 @@ tasks=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)
 ret=$(python3 ${INFERNUS_DIR}/bin/count_segments.py --jsonfile=$jsonfile)
 array=$(echo $ret | awk '{print $NF}')
 
-#array=100
+#array=10
 echo "array: $array"
 
 
@@ -98,28 +98,22 @@ if [ $total_jobs -gt 2048 ]; then
 fi
 
 
-#array=8
+#array=12
+#total_jobs=6000
 
 #0-$((array - 1))
 
 #split is the fraction of tasks that goes TO ozstar rather than NT
-split=$(( $array / 2))
+split=$(( $array / 3))
 #split=$((7 *$array / 8))
 
 
 echo "split: $split"
-inference_mem_size=$(( ${temp_size} * 2 ))
-
-#run inj jobs with a small amount of niceness to ensure BG jobs get priority.
-if [ "$injfile" == "None" ]; then
-	nice=" --nice"
-else
-	nice=""
-fi
+inference_mem_size=$(( ${temp_size} * 3 ))
 
 
 if [ "$injfile" == "None" ]; then
-	if [ $array -lt 10 ]; then
+	if [ $array -le 10 ]; then
 		#main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		#--dependency=aftercorr:$main
@@ -141,7 +135,7 @@ if [ "$injfile" == "None" ]; then
 		echo "main: $main"
 	fi
 else
-	if [ $array -lt 10 ]; then
+	if [ $array -le 10 ]; then
 		#main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 	else

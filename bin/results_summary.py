@@ -140,6 +140,8 @@ for i in range(8,bg.shape[2]):
 	plt.hist(bg_func, bins = 100, histtype = 'step', label = "BG")
 	plt.hist(nn_preds, bins = 100, histtype = 'step', label = "Inj")
 	plt.yscale('log')
+	plt.xlabel("Ranking statistic")
+	plt.ylabel("Counts")
 
 	#save the histogram to a file
 	plt.savefig(os.path.join(model_val_dir, "NN{}_hist.png".format(i)),dpi = 300)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
@@ -29,7 +29,7 @@ def get_buffer(
     buffer_id: int,
     overlap: int,
     buffer_length: int
-) -> (np.ndarray, np.ndarray):
+) -> Tuple[np.ndarray, np.ndarray]:
     # if first sample, prepend zeros to temp_data
     if buffer_id == 0:
         temp_data = np.concatenate(
@@ -59,7 +59,7 @@ def get_secondary(
     primary_arg_maxes: np.ndarray,
     offset: int,
     det_idx: int
-) -> (np.ndarray, np.ndarray):
+) -> Tuple[np.ndarray, np.ndarray]:
     secondary_slices = []
     for j in range(temp_data.shape[0]):
         minimum = primary_arg_maxes[j]-offset if primary_arg_maxes[j]-offset>=0 else 0
@@ -87,7 +87,8 @@ def get_zerolags(
     buffer_length: int = 2048,
     overlap: int = int(0.2*2048),
     num_trigs: int = 1,
-    chop_time: int = 0
+    chop_time: int = 0,
+    both_detectors_above_thresh: bool = False
 ) -> List[List[float]]:
     zerolags = []
     
@@ -106,6 +107,10 @@ def get_zerolags(
             secondary_maxes, secondary_arg_maxes = get_secondary(temp_data, primary_arg_maxes, offset, val)
             
             coh_snrs = np.sqrt(np.square(primary_maxes) + np.square(secondary_maxes))
+            #if both_detectors_above_thresh is true then trim down the coh_snrs to only those where both detectors are above threshold
+            #we can do this by setting coh_snrs to 0 where either detector is below threshold
+            if both_detectors_above_thresh:
+                coh_snrs[(primary_maxes < snr_thresh) | (secondary_maxes < snr_thresh)] = 0
             
             absolute_primary_arg_maxes = primary_arg_maxes - overlap//2 + i#- offset + i
             absolute_secondary_arg_maxes = secondary_arg_maxes + (primary_arg_maxes - offset) +i  - overlap//2 #- offset + i
@@ -118,7 +123,8 @@ def get_zerolags(
             # Format is (h1_snr, l1_snr, coh_snr, h1_time_idx, l1_time_idx, template_idx)
             if val == 0:
                 for k in coh_snr_max_args:
-                    if primary_maxes[k] >= snr_thresh:
+                    #TODO: remove unnecessary check on both_detectors_above_thresh
+                    if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
                         temp_zerolags.append([
                             primary_maxes[k], secondary_maxes[k],
                             coh_snrs[k],
@@ -128,7 +134,7 @@ def get_zerolags(
 #                         break
             else:
                 for k in coh_snr_max_args:
-                    if primary_maxes[k] >= snr_thresh:
+                    if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
                         temp = [
                             secondary_maxes[k], primary_maxes[k],
                             coh_snrs[k],

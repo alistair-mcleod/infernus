@@ -47,10 +47,6 @@ job_id = args.jobindex #job id in job array
 #worker_id = args.workerid
 n_workers = args.totalworkers
 n_jobs = 1
-gpu_node = None
-grpc_port = None
-#grpc_port = 20000 + 1 #GRPC port is always 1 more than HTTP port
-#n_gpus = 1
 argsfile = args.argsfile
 print(argsfile)
 
@@ -64,8 +60,6 @@ inj_index = None
 if args.injindex >= 0:
 	inj_index = args.injindex
 	print("Using injection file index", inj_index)
-
-#print(gpu_node)
 
 print("I'm job number", job_id)
 

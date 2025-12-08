@@ -17,7 +17,7 @@ echo $SLURM_JOB_NODELIST
 jsonfile=$1
 #savedir=$2
 
-ml gcc/11.3.0 openmpi/4.1.4 python/3.10.4 cudnn/8.4.1.50-cuda-11.7.0
+ml gcc/11.3.0 openmpi/4.1.4 python/3.10.4 cudnn/8.4.1.50-cuda-11.7.0 imkl/2023.2.0
 ml apptainer
 
 #echo infernus_dir

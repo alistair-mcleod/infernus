@@ -23,12 +23,14 @@ injfile = args["injfile"]
 # 	savedir = os.path.join(savedir, "inj_" + str(injindex))
 # 	print("New save directory is ", savedir)
 
-if injfile == "None":
-	fail_tolerant = True
-	print("Background run, fail tolerant mode is on")
-else:
-	fail_tolerant = False
-	print("Not a background run, fail tolerant mode is off")
+# if injfile == "None":
+# 	fail_tolerant = True
+# 	print("Background run, fail tolerant mode is on")
+# else:
+# 	fail_tolerant = False
+# 	print("Not a background run, fail tolerant mode is off")
+print("Fail tolerant mode is now off for all jobs. TODO: add an argument to allow for fail tolerance.")
+fail_tolerant = False
 
 print(noise_dir)
 delta_f = 1/duration

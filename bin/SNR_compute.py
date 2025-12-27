@@ -122,6 +122,12 @@ if "template_chirp_mass_min" in args:
 	cut = (templates[:,0] > args["template_chirp_mass_min"])
 if "template_chirp_mass_max" in args:
 	cut = cut & (templates[:,0] < args["template_chirp_mass_max"])
+if "template_q_min" in args:
+	q = templates[:,2] / templates[:,1]
+	cut = cut & (q > args["template_q_min"])
+if "template_q_max" in args:
+	q = templates[:,2] / templates[:,1]
+	cut = cut & (q < args["template_q_max"])
 if cut is not None:
 	templates = templates[cut]
 
@@ -173,6 +179,17 @@ try:
 except:
 	both_detectors_above_thresh = False
 print("both detectors above threshold flag set to", both_detectors_above_thresh)
+
+if "max_snr_ratio" in args:
+	max_snr_ratio = args["max_snr_ratio"]
+else:
+	max_snr_ratio = False
+print("max SNR ratio flag set to", max_snr_ratio)
+
+if "destroy_coincidences" in args:
+	destroy_coincidences = args["destroy_coincidences"]
+else:
+	destroy_coincidences = False
 
 if "bin" in args:
 	bin = args["bin"]
@@ -844,6 +861,11 @@ def calc_batch(i):
 	if injfile is not None:
 		#get_zerolag(nonwindowed_SNR, template_start_idx)
 		#get_timeslide_new(0, nonwindowed_SNR, template_start_idx)
+		if destroy_coincidences:
+			print("destroying coincidences.")
+			#roll one detector by 2 seconds to destroy coincidences
+			nonwindowed_SNR[1,:,:] = np.roll(nonwindowed_SNR, 4096, axis = 1)
+
 		get_timeslide_new(0, nonwindowed_SNR, template_banks[i])
 	else:
 		

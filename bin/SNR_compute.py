@@ -449,7 +449,8 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 		overlap = int(0.2*2048),
 		num_trigs = 1,
 		chop_time = chop_idx,
-		both_detectors_above_thresh = both_detectors_above_thresh
+		both_detectors_above_thresh = both_detectors_above_thresh,
+		max_snr_ratio = max_snr_ratio
 	)
 
 	zerolags = np.array(zerolags)

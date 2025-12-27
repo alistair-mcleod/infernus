@@ -88,7 +88,8 @@ def get_zerolags(
     overlap: int = int(0.2*2048),
     num_trigs: int = 1,
     chop_time: int = 0,
-    both_detectors_above_thresh: bool = False
+    both_detectors_above_thresh: bool = False,
+    max_snr_ratio: float = False
 ) -> List[List[float]]:
     zerolags = []
     
@@ -107,6 +108,12 @@ def get_zerolags(
             secondary_maxes, secondary_arg_maxes = get_secondary(temp_data, primary_arg_maxes, offset, val)
             
             coh_snrs = np.sqrt(np.square(primary_maxes) + np.square(secondary_maxes))
+
+            if max_snr_ratio:
+                ratio = primary_maxes / (secondary_maxes)
+                ratio[ratio < 1] = 1 / ratio[ratio < 1]
+                coh_snrs[ratio > max_snr_ratio] = 0
+
             #if both_detectors_above_thresh is true then trim down the coh_snrs to only those where both detectors are above threshold
             #we can do this by setting coh_snrs to 0 where either detector is below threshold
             if both_detectors_above_thresh:
@@ -123,26 +130,28 @@ def get_zerolags(
             # Format is (h1_snr, l1_snr, coh_snr, h1_time_idx, l1_time_idx, template_idx)
             if val == 0:
                 for k in coh_snr_max_args:
-                    #TODO: remove unnecessary check on both_detectors_above_thresh
-                    if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
-                        temp_zerolags.append([
-                            primary_maxes[k], secondary_maxes[k],
-                            coh_snrs[k],
-                            absolute_primary_arg_maxes[k], absolute_secondary_arg_maxes[k],
-                            k
-                        ])
+                    if coh_snrs[k] != 0:
+                        #TODO: remove unnecessary check on both_detectors_above_thresh
+                        if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
+                            temp_zerolags.append([
+                                primary_maxes[k], secondary_maxes[k],
+                                coh_snrs[k],
+                                absolute_primary_arg_maxes[k], absolute_secondary_arg_maxes[k],
+                                k
+                            ])
 #                         break
             else:
                 for k in coh_snr_max_args:
-                    if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
-                        temp = [
-                            secondary_maxes[k], primary_maxes[k],
-                            coh_snrs[k],
-                            absolute_secondary_arg_maxes[k], absolute_primary_arg_maxes[k],
-                            k
-                        ]
-                        if temp not in temp_zerolags:
-                            temp_zerolags.append(temp)
+                    if coh_snrs[k] != 0:
+                        if primary_maxes[k] >= snr_thresh and (not both_detectors_above_thresh or secondary_maxes[k] >= snr_thresh):
+                            temp = [
+                                secondary_maxes[k], primary_maxes[k],
+                                coh_snrs[k],
+                                absolute_secondary_arg_maxes[k], absolute_primary_arg_maxes[k],
+                                k
+                            ]
+                            if temp not in temp_zerolags:
+                                temp_zerolags.append(temp)
         
         # Chooses best zerolags by maximum coherent SNR
         try:

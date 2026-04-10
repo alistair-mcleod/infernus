@@ -269,7 +269,7 @@ required_rows = num_models + 8
 
 if timeslides.shape[3] < required_rows:
 	print("adding entries to accomodate model predictions")
-	timeslides = np.concatenate((timeslides, np.zeros((timeslides.shape[0], timeslides.shape[1], timeslides.shape[2], required_rows - timeslides.shape[3]))), axis = 3)
+	timeslides = np.concatenate((timeslides, np.zeros((timeslides.shape[0], timeslides.shape[1], timeslides.shape[2], required_rows - timeslides.shape[3])) - 1000), axis = 3)
 else:
 	print("timeslides already has enough entries for model predictions")
 
@@ -286,12 +286,20 @@ if os.path.exists(os.path.join(os.path.dirname(save_dir), "model_repositories", 
 	modeldir = os.path.join(os.path.dirname(save_dir), "model_repositories", "repo_1")
 else:
 	print("new style of model dir")
-	#get the name of the parent directory
-	# pardir = save_dir.split("/")[-1]
-	# modeldir = os.path.dirname(os.path.dirname(save_dir))
-	# modeldir = os.path.join(modeldir, "models", pardir , "model_repositories", "repo_1")
-	modeldir = os.path.join(json_args["jobdir"], "models", bin , "model_repositories", "repo_1")
+	if "modeldir" in json_args:
+		modeldir = os.path.join(json_args["modeldir"], bin, "model_repositories", "repo_1")
+	else:
+		modeldir = os.path.join(json_args["jobdir"], "models", bin , "model_repositories", "repo_1")
 	print("modeldir is ", modeldir)
+
+
+#check if ALL SNRs in timeslides are 0 or less. If so we can exit early.
+if np.all(timeslides[:,:,:,2] <= 0):
+	print("Exiting early, this should only happen if this is a segment of an injection run with no injections.")
+	#save timeslides to file
+	timeslides = timeslides.astype(np.float32)
+	np.save(save_dir + "/timeslides_{}.npy".format(job_id), timeslides)
+	sys.exit(0)
 
 sess = None
 def run_session(args):
@@ -610,7 +618,17 @@ for n in range(num_models):
 
 	#just overwrite everything, but don't use the predictions to tell if a timeslide is valid!
 
-	timeslides[:,:,:,response_idx] = response_array[:,:,:]
+	#timeslides[:,:,:,response_idx] = response_array[:,:,:]
+	#on second thoughts, we should DEFINITELY replace predictions with -1000 for invalid timeslides
+	#also time the new loop to check it's not too slow
+
+	timeslides[:,:,:,response_idx] = -1000
+	for i in range(num_time_slides):
+		for j in range(timeslides.shape[1]):
+			for k in range(timeslides.shape[2]):
+				if timeslides[i,j,k,2] > 1:
+					timeslides[i,j,k,response_idx] = response_array[i,j,k]
+
 	response_idx += 1
 	print("response index is now ", response_idx)
 	print("Inference time: ", triton_time)

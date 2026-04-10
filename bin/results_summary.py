@@ -19,6 +19,7 @@ parser.add_argument('--configfile', type=str, default=None)
 args = parser.parse_args()
 
 if args.configfile.split("/")[-1] == "submit.json":
+	#this should be the preferred way to run this script
 	submit_args = json.load(open(args.configfile))
 	inj_args = json.load(open(submit_args['injection_args']))
 	bg_args = json.load(open(submit_args['background_args']))
@@ -38,6 +39,17 @@ if args.configfile.split("/")[-1] == "submit.json":
 	real_dir_root = os.path.join(inj_args['jobdir'], "real_events", inj_args['bin'])
 	real_dirs = sorted(os.listdir(real_dir_root))
 	print("Real dirs: ", real_dirs)
+	#also get the trigger selection from the submit args
+	if 'trigger_selection' in inj_args:
+		trigger_selection = inj_args['trigger_selection']
+		try:
+			trigger_selection = eval(trigger_selection)
+			print("Using trigger selection function: ", trigger_selection)
+		except:
+			print("Failed to evaluate trigger selection, defaulting to median")
+			trigger_selection = np.median
+	else:
+		trigger_selection = np.median
 
 
 else:
@@ -77,7 +89,11 @@ bg = bg.reshape(-1, bg.shape[2], bg.shape[3])
 bg = bg[np.all(bg[:,:,2] > 0, axis = 1)]
 
 zerolags = np.load(inj_file)[0] #the 0 is to get rid of the timeslides axis
-
+for i in range(zerolags.shape[0]):
+	for j in range(zerolags.shape[1]):
+		if zerolags[i,j,2] < 0:
+			zerolags[i,j,8:] = -100
+			
 m1 = inj_params["m1"]
 m2 = inj_params["m2"]
 pipeline_fars = inj_params["pipeline_fars"]
@@ -107,7 +123,7 @@ def apply_func_to_bg_inj(bg,inj, func, rs_index = 8):
 
 bg_sort = []
 for i in range(8,bg.shape[2]):
-	bg_func, inj_func = apply_func_to_bg_inj(bg, zerolags, np.median, rs_index = i)
+	bg_func, inj_func = apply_func_to_bg_inj(bg, zerolags, trigger_selection, rs_index = i)
 	#get rid of nans from the background
 	bg_func = bg_func[np.where(np.isfinite(bg_func))]
 	#also clip the background at 50
@@ -138,7 +154,7 @@ for i in range(8,bg.shape[2]):
 	bg_max = bg_func[-10]
 	print("events with prediction higher than background (note: 10 highest BG points are removed):", (nn_preds > bg_max).sum())
 	plt.hist(bg_func, bins = 100, histtype = 'step', label = "BG")
-	plt.hist(nn_preds, bins = 100, histtype = 'step', label = "Inj")
+	plt.hist(nn_preds[nn_preds > -100], bins = 100, histtype = 'step', label = "Inj")
 	plt.yscale('log')
 	plt.xlabel("Ranking statistic")
 	plt.ylabel("Counts")
@@ -366,9 +382,9 @@ for d in real_dirs:
 
 		for i in range(8, real_event.shape[2]):
 			#note: the two below lines are super slow. We should have a sorted BG for each model,
-			#bg_func, real_func = apply_func_to_bg_inj(bg, real_event, np.median, rs_index = i)
+			#bg_func, real_func = apply_func_to_bg_inj(bg, real_event, trigger_selection, rs_index = i)
 			#real_preds = preds_to_far_constrained(bg_func, real_func, upper = upper_thresh, lower = lower_thresh, verbose = False)
-			_, real_func = apply_func_to_bg_inj(bg[:2], real_event, np.median, rs_index = i)
+			_, real_func = apply_func_to_bg_inj(bg[:2], real_event, trigger_selection, rs_index = i)
 			real_preds = preds_to_far_constrained(bg_sort[i-8], real_func, upper = upper_thresh, lower = lower_thresh, verbose = False)
 
 			real_far = real_preds[real_idx]
@@ -390,6 +406,8 @@ for d in real_dirs:
 				if real_preds[real_idx -1] < real_far or real_preds[real_idx +1] < real_far:
 					#set the FAR to the lower of the two neighbouring triggers
 					real_far = min(real_preds[real_idx -1], real_preds[real_idx +1])
+				#TODO: generalise this to other ways of picking the trigger
+				trig = np.where(real_event[real_idx,:,i] == trigger_selection(real_event[real_idx,:,i]))[0][0]
 				detection_fars[i-8].append(real_far)
 				detection_snrs[i-8].append(real_event[real_idx, 0, 2]) 
 		print("Done with event", real_dir)

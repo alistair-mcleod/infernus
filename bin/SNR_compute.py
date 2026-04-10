@@ -110,24 +110,24 @@ if "template_mass1_min" in args:
 	print("cutting templates")
 	cut = (templates[:,1] > args["template_mass1_min"]) 
 if "template_mass1_max" in args:
-	cut = cut & (templates[:,1] < args["template_mass1_max"])
+	cut = cut & (templates[:,1] <= args["template_mass1_max"])
 if "template_mass2_min" in args:
 	cut = cut & (templates[:,2] > args["template_mass2_min"])
 if "template_mass2_max" in args:
-	cut = cut & (templates[:,2] < args["template_mass2_max"])
+	cut = cut & (templates[:,2] <= args["template_mass2_max"])
 if "template_chirp_mass_min" in args:
 	#note there might or might not be a cut on component mass
 	print("cutting templates by chirp mass")
 	print("note: this overrides component mass cuts if they exist")
 	cut = (templates[:,0] > args["template_chirp_mass_min"])
 if "template_chirp_mass_max" in args:
-	cut = cut & (templates[:,0] < args["template_chirp_mass_max"])
+	cut = cut & (templates[:,0] <= args["template_chirp_mass_max"])
 if "template_q_min" in args:
 	q = templates[:,2] / templates[:,1]
 	cut = cut & (q > args["template_q_min"])
 if "template_q_max" in args:
 	q = templates[:,2] / templates[:,1]
-	cut = cut & (q < args["template_q_max"])
+	cut = cut & (q <= args["template_q_max"])
 if cut is not None:
 	templates = templates[cut]
 
@@ -190,6 +190,20 @@ if "destroy_coincidences" in args:
 	destroy_coincidences = args["destroy_coincidences"]
 else:
 	destroy_coincidences = False
+
+if "shuffle_templates" in args:
+	shuffle_templates = args["shuffle_templates"]
+else:
+	shuffle_templates = True
+print("shuffle templates flag set to", shuffle_templates)
+
+if "binned_triggers" in args:
+	binned_triggers = args["binned_triggers"]
+else:
+	binned_triggers = False
+print("binned triggers flag set to", binned_triggers)
+if binned_triggers and shuffle_templates:
+	print("WARNING: both binned_triggers and shuffle_templates are set to True.)")
 
 if "bin" in args:
 	bin = args["bin"]
@@ -355,56 +369,86 @@ if len(deleted_zerolags) > 0:
 
 
 all_detectors = {'H1': Detector('H1'), 'L1': Detector('L1'), 'V1': Detector('V1'), 'K1': Detector('K1')}
+from infernus.injection_utils import load_O3_injections, load_O4_injections
 
 if injfile is not None and injfile != "noninj" and injfile != "real":
 	print("using injection file", injfile)
+
+	#load the HDF file
+
 	f = h5py.File(injfile, 'r')
-	mask = (f['injections']['gps_time'][:] > valid_times[segment]) & (f['injections']['gps_time'][:] < valid_times[segment] + duration)
-	n_injs = np.sum(mask)
+	#now use the key to tell which obs run this file is from
+	if "injections" in f:
+		ret = load_O3_injections(f, valid_times[segment], valid_times[segment] + duration, f_lower, verbose = True)
+	elif "events" in f:
+		ret = load_O4_injections(f, valid_times[segment], valid_times[segment] + duration, f_lower, verbose = True)
+
+	n_injs = ret["n_injs"]
 	print("number of injections in this segment:", n_injs)
+	gps = ret["gps"]
+	mass1 = ret["mass1"]
+	mass2 = ret["mass2"]
+	spin1x = ret["spin1x"]
+	spin1y = ret["spin1y"]
+	spin1z = ret["spin1z"]
+	spin2x = ret["spin2x"]
+	spin2y = ret["spin2y"]
+	spin2z = ret["spin2z"]
+	distance = ret["distance"]
+	inclination = ret["inclination"]
+	polarization = ret["polarization"]
+	right_ascension = ret["right_ascension"]
+	declination = ret["declination"]
+	optimal_snr_h = ret["optimal_snr_h"]
+	optimal_snr_l = ret["optimal_snr_l"]
+	eccentricity = ret["eccentricity"]
+	startgps = ret["startgps"]
+	gps_dict = ret["gps_dict"]
 
-	gps = f['injections']['gps_time'][mask]
-	mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask]) #TODO: simplify by replacing with detector frame masses
-	mass2 = f['injections']['mass2_source'][mask] * (1 + f['injections']['redshift'][mask])
-	spin1x = f['injections']['spin1x'][mask]
-	spin1y = f['injections']['spin1y'][mask]
-	spin1z = f['injections']['spin1z'][mask]
-	spin2x = f['injections']['spin2x'][mask]
-	spin2y = f['injections']['spin2y'][mask]
-	spin2z = f['injections']['spin2z'][mask]
-	distance = f['injections']['distance'][mask]
-	inclination = f['injections']['inclination'][mask]
-	polarization = f['injections']['polarization'][mask]
-	right_ascension = f['injections']['right_ascension'][mask]
-	declination = f['injections']['declination'][mask]
-	optimal_snr_h = f['injections']['optimal_snr_h'][mask]
-	optimal_snr_l = f['injections']['optimal_snr_l'][mask]
-	if "eccentricity" in f['injections']:
-		eccentricity = f['injections']['eccentricity'][mask]
-	else:
-		eccentricity = np.zeros(n_injs)
+	# mask = (f['injections']['gps_time'][:] > valid_times[segment]) & (f['injections']['gps_time'][:] < valid_times[segment] + duration)
+	# n_injs = np.sum(mask)
+	# print("number of injections in this segment:", n_injs)
 
-	#This is necessary for migration to numpy V2, as float32 runs into an overflow
-	mass1 = np.array(mass1, dtype = np.float64)
-	mass2 = np.array(mass2, dtype = np.float64)
-	startgps = []
-	for i in range(n_injs):
-		startgps.append(np.floor(gps[i] - t_at_f(mass1[i], mass2[i], f_lower)))
+	# gps = f['injections']['gps_time'][mask]
+	# mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask]) #TODO: simplify by replacing with detector frame masses
+	# mass2 = f['injections']['mass2_source'][mask] * (1 + f['injections']['redshift'][mask])
+	# spin1x = f['injections']['spin1x'][mask]
+	# spin1y = f['injections']['spin1y'][mask]
+	# spin1z = f['injections']['spin1z'][mask]
+	# spin2x = f['injections']['spin2x'][mask]
+	# spin2y = f['injections']['spin2y'][mask]
+	# spin2z = f['injections']['spin2z'][mask]
+	# distance = f['injections']['distance'][mask]
+	# inclination = f['injections']['inclination'][mask]
+	# polarization = f['injections']['polarization'][mask]
+	# right_ascension = f['injections']['right_ascension'][mask]
+	# declination = f['injections']['declination'][mask]
+	# optimal_snr_h = f['injections']['optimal_snr_h'][mask]
+	# optimal_snr_l = f['injections']['optimal_snr_l'][mask]
+	# if "eccentricity" in f['injections']:
+	# 	eccentricity = f['injections']['eccentricity'][mask]
+	# else:
+	# 	eccentricity = np.zeros(n_injs)
 
-	startgps = np.array(startgps)
+	# #This is necessary for migration to numpy V2, as float32 runs into an overflow
+	# mass1 = np.array(mass1, dtype = np.float64)
+	# mass2 = np.array(mass2, dtype = np.float64)
+	# startgps = []
+	# for i in range(n_injs):
+	# 	startgps.append(np.floor(gps[i] - t_at_f(mass1[i], mass2[i], f_lower)))
 
-	hgps = gps + all_detectors['H1'].time_delay_from_earth_center(right_ascension, declination, gps)
-	lgps = gps + all_detectors['L1'].time_delay_from_earth_center(right_ascension, declination, gps)
-	gps_dict = {'H1': hgps, 'L1': lgps}
-	print("GPS times for injections should be correct now (injected from geocentre)")
-	#lgps = gps + all_detectors['L1'].time_delay_from_detector(all_detectors['H1'], 
-	#											right_ascension, 
-	#											declination, 
-	#											gps)
+	# startgps = np.array(startgps)
 
-	#gps_dict = {'H1': gps, 'L1': lgps}
+	# hgps = gps + all_detectors['H1'].time_delay_from_earth_center(right_ascension, declination, gps)
+	# lgps = gps + all_detectors['L1'].time_delay_from_earth_center(right_ascension, declination, gps)
+	# gps_dict = {'H1': hgps, 'L1': lgps}
+	# print("GPS times for injections should be correct now (injected from geocentre)")
+	# #lgps = gps + all_detectors['L1'].time_delay_from_detector(all_detectors['H1'], 
+	# #											right_ascension, 
+	# #											declination, 
+	# #											gps)
 
-
+	# #gps_dict = {'H1': gps, 'L1': lgps}
 
 
 template_time = mp.Value('d', 0)
@@ -500,17 +544,23 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 
 	#we get the lock of the shared array, rather than the numpy array itself
 	with shared_array_base.get_lock():
-
-		if injfile is None:
-			overwrite_criterion = (zerolags[:,0,2] > np.min(timeslides[i,:,:,2], axis = 1)) & \
-				(h_end.astype('int') - h_start.astype('int') == 4096) & \
-				is_timeslide_valid(np.arange(timeslides.shape[1]), i, chop_time)
-		
+		#overwrite criterion is a boolean array of equal length as the segment
+		if binned_triggers != False:
+			overwrite_criterion = (zerolags[:,0,2] > timeslides[i,np.arange(timeslides.shape[1]),trigger_template_map[np.array(template_ids)[zerolags[:,0,5].astype('int')]],2]) & \
+					(h_end.astype('int') - h_start.astype('int') == 4096) & (zerolags[:,0,5].astype('int') != -1)
 		else:
 			overwrite_criterion = (zerolags[:,0,2] > np.min(timeslides[i,:,:,2], axis = 1)) & \
-			(h_end.astype('int') - h_start.astype('int') == 4096)
-			
-		overwrite_targets = np.argmin(timeslides[i,:,:,2][overwrite_criterion],axis = 1)
+				(h_end.astype('int') - h_start.astype('int') == 4096)
+		
+		if injfile is None:
+			overwrite_criterion = overwrite_criterion & is_timeslide_valid(np.arange(timeslides.shape[1]), i, chop_time)
+
+		if binned_triggers != False:
+			overwrite_targets = trigger_template_map[np.array(template_ids)[zerolags[overwrite_criterion,0,5].astype('int')]]
+		else:
+			overwrite_targets = np.argmin(timeslides[i,:,:,2][overwrite_criterion],axis = 1)
+		#overwrite_targets = trigger_template_map[np.array(template_ids)[zerolags[:,0,5].astype('int')]][overwrite_criterion]
+		#print("Overwrite targets:", list(overwrite_targets))
 
 		timeslides[i, overwrite_criterion, overwrite_targets,:6] = zerolags[overwrite_criterion].squeeze()
 		timeslides[i, overwrite_criterion, overwrite_targets, 6] = h_start[overwrite_criterion]
@@ -605,6 +655,9 @@ SNR_array = np.frombuffer(SNR_array_base.get_obj(),dtype=np.float32)
 #the 1 is in case we end up saving multiple SNR time series per second
 SNR_array = SNR_array.reshape(2, num_time_slides, 900 - int(chop_time), num_triggers, 4096)
 
+#set the SNR array to 0 just in case
+with SNR_array_base.get_lock():
+	SNR_array[:] = 0
 #create SNR_array as a memmap
 
 #SNR_array = np.memmap(myfolder + "/SNR_array_{}_{}.npy".format(job_id,worker_id), 
@@ -634,9 +687,27 @@ template_banks = []
 for i in range(len(templates)):
 	if len(template_banks) < i%loop +1:
 		template_banks.append([])
-	
-	template_banks[i%loop].append(i)
+	if shuffle_templates:
+		template_banks[i%loop].append(i)
+	else:
+		template_banks[i //templates_per_batch].append(i)
+print(template_banks[0])
 #TODO: tweak template shuffling: should make all batches but the last the same number of templates.
+
+#if binned_triggers is true, we need to assign each template to a bin
+if binned_triggers != False:
+	#NOTE: this is only an implementation if each bin is an equal number of templates
+	templates_per_bin = len(templates) // num_triggers
+	trigger_template_map = np.zeros(len(templates), dtype = np.int32)
+	for n in range(num_triggers):
+		start_idx = n * templates_per_bin
+		if n == num_triggers - 1:
+			end_idx = len(templates)
+		else:
+			end_idx = (n+1) * templates_per_bin
+		trigger_template_map[start_idx:end_idx] = n
+	print("trigger template map:", trigger_template_map)
+
 
 #templates_per_job = int(np.ceil(len(templates)/n_workers))
 templates_per_job = len(templates)
@@ -651,7 +722,7 @@ template_start = 0
 print("starting from template", template_start, flush=True)
 
 n_batches = int(np.ceil(templates_per_job/templates_per_batch))
-print("n_batches", n_batches)
+print("n_batches", n_batches, flush=True)
 
 t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
 #snrs = []
@@ -677,14 +748,24 @@ else:
 
 #if necessary, insert injections
 if injfile is not None and injfile != "noninj" and injfile != "real":
+	if n_injs == 0:
+		print("No injections to add in this segment. If this is unexpected, ensure that the injection file GPS range and run GPS range are consistent.")
+		print("Exiting early.")
+		#save empty SNR array and timeslides
+		np.save(os.path.join(myfolder,"timeslides_{}_0.npy".format(job_id)), timeslides)
+		#save SNR array to file
+		np.save(os.path.join(myfolder,"SNR_array_{}_0.npy".format(job_id)), SNR_array)
+		sys.exit(0)
+		
 	for k in range(n_injs):
 		if startgps[k] > valid_times[segment] and gps[k] + 1 < valid_times[segment] + end_cutoff:
-			print("inserting injection {}".format(k))
+			print("inserting injection {}".format(k), flush = True)
 			#print the paramters
 			print("mass1:", mass1[k], "mass2:", mass2[k], "spin1z:", spin1z[k], "spin2z:", spin2z[k], "distance:", distance[k])
 			#insert into the loaded noise
 			#temp_approximant = td_approximant
 			#temp_f_lower = f_lower
+			print("Approximant: ", td_approximant, flush = True)
 			
 			temp_delta_t = delta_t
 			temp_delta_t = delta_t/8 #catch-all for now
@@ -697,6 +778,12 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 			else:
 				temp_f_lower = 10
 			temp_f_lower = min(temp_f_lower, maximum_f_lower(mass1[k], mass2[k]))
+
+			if temp_td_approximant == "IMRPhenomXPHM" and mass1[k] + mass2[k] < 2.5:
+				temp_f_lower = 30
+				print("Low mass with XPHM! Find a workaround to it consuming a huge amount of resources", flush = True)
+				temp_delta_t = delta_t/2
+				#temp_td_approximant = "IMRPhenomXPHM"
 
 			# if mass1[k] + mass2[k] > 9 and temp_approximant == "SEOBNRv4P":
 			# 	temp_approximant = "SEOBNRv4PHM"

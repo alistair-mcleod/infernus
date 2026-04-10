@@ -13,7 +13,7 @@ import astropy.units as u
 from astropy.cosmology import FlatwCDM
 import numpy as np
 cosmo = FlatwCDM(H0=67.9, Om0=0.3065, w0=-1)
-from GWSamplegen.noise_utils import combine_seg_list, get_valid_noise_times, get_valid_noise_times_from_segments
+from GWSamplegen.noise_utils import combine_seg_list, get_valid_noise_times, get_valid_noise_times_from_segments,gps_to_run
 from GWSamplegen.waveform_utils import t_at_f
 from scipy.optimize import minimize
 from scipy.stats import norm, skewnorm, t
@@ -440,8 +440,6 @@ def get_O3_week(week):
 def get_inj_data(week, noise_dir, mdc_file,
                  duration = 1024, start_cutoff = 100, end_cutoff = 1000, f_lower = 30, 
                  pipelines = ["pycbc_hyperbank", "mbta", "gstlal"],
-                 ifo_1 = "H1_O3a.txt",
-                 ifo_2 = "L1_O3a.txt",
                  two_detector_restriction = True):
 
     #TODO: properly divide up this function
@@ -509,7 +507,19 @@ def get_inj_data(week, noise_dir, mdc_file,
         print("Inj run specified as a tuple of GPS times. Make sure they're contiguous.")
         start = noise_dir[0][0]
         end = noise_dir[-1][1]
-
+        #get the obsrun ID from the start and end time. If they agree, use that. If not, raise an error.
+        runstart = gps_to_run(start)
+        runend = gps_to_run(end)
+        if runstart != runend:
+            raise ValueError("The GPS times specified for the injection run do not correspond to a single observing run. Please specify GPS times that correspond to a single observing run, e.g. O2, O3a, O3b, O4a, etc.")
+        else:
+            print("GPS times correspond to run ", runstart)
+        ifo_1 = "H1_{}.txt".format(runstart)
+        ifo_2 = "L1_{}.txt".format(runstart)
+    else:
+        ifo_1 = "H1_O3a.txt"
+        ifo_2 = "L1_O3a.txt"
+        print("defaulting to O3a segment files. Fix this code to be more flexible in the future.")
 
     try:
         ifo_1 = impresources.files(segments).joinpath(ifo_1)

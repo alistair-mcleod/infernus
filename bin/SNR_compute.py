@@ -779,19 +779,17 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 				temp_f_lower = 10
 			temp_f_lower = min(temp_f_lower, maximum_f_lower(mass1[k], mass2[k]))
 
-			if temp_td_approximant == "IMRPhenomXPHM" and mass1[k] + mass2[k] < 2.5:
-				temp_f_lower = 30
-				print("Low mass with XPHM! Find a workaround to it consuming a huge amount of resources", flush = True)
+			if temp_td_approximant == "IMRPhenomXPHM":
+				if mass1[k] + mass2[k] < 4:
+					temp_f_lower = 25
+					print("Increasing f_lower to 25 Hz as IMRPhenomXPHM has issues with LOW f_lowers.")
+					#print("Low mass with XPHM! Find a workaround to it consuming a huge amount of resources", flush = True)
+				else:
+					temp_f_lower = 15
+				
 				temp_delta_t = delta_t/2
 				#temp_td_approximant = "IMRPhenomXPHM"
 
-			# if mass1[k] + mass2[k] > 9 and temp_approximant == "SEOBNRv4P":
-			# 	temp_approximant = "SEOBNRv4PHM"
-			# 	#temp_f_lower = 10
-				
-			# if mass1[k] + mass2[k] < 9 and temp_approximant == "SEOBNRv4PHM":
-			# 	temp_approximant = "SEOBNRv4P"
-			
 			# #NOTE: changed so that f_lower is always 10 Hz at most, as injections are meant to be generated down to 10 Hz.
 			# #temp_f_lower = min(maximum_f_lower(mass1[k], mass2[k]), f_lower)
 			# temp_f_lower = min(maximum_f_lower(mass1[k], mass2[k]), 10)
@@ -818,6 +816,13 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 							spin1z = spin1z[k], spin2z = spin2z[k],
 							inclination = inclination[k], distance = distance[k], 
 							delta_t = temp_delta_t, f_lower = temp_f_lower, approximant = temp_td_approximant) 
+				if np.max(np.abs(hp.data)) > 1e-10:
+					print("WARNING: WAVEFORM HAS EXTREMELY HIGH AMPLITUDE! Parameters:")
+					print("mass1:", mass1[k], "mass2:", mass2[k], "spin1z:", spin1z[k], "spin2z:", spin2z[k], "distance:", distance[k])
+					print("Approximant:", temp_td_approximant)
+					print("Max amplitude:", np.max(np.abs(hp.data)))
+					print("Exiting to be safe. Check if the approximant is causing issues.")
+					sys.exit(1)
 			hp = hp.resample(delta_t)
 			hc = hc.resample(delta_t)
 			offset = max(int(hp.sample_times[-1]/delta_t),0)

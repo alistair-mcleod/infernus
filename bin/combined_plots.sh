@@ -31,6 +31,6 @@ fi
 
 
 #logdir=$(jq -r '.jobdir' $model_args)/plotting.log
-plotting=$(sbatch --job-name=${jobname}_plotting --output=${jobdir}/logs/${jobname}_combined_plotting.log --time=04:00:00 --mem=30G ${dep} \
+plotting=$(sbatch --job-name=${jobname}_plotting --output=${jobdir}/logs/${jobname}_combined_plotting.log --time=04:00:00 --mem=60G ${dep} \
 	--parsable --wrap "python ${INFERNUS_DIR}/bin/combined_pipeline_summary.py --configfile=${dataset_file}")
 

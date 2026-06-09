@@ -75,6 +75,7 @@ print("Total missing files: ", len(missing_segments))
 max_array = 2048
 missing_segments = sorted(set(i % max_array for i in missing_segments))
 
+merge_failed = False
 if len(missing_segments) > 0:
 
 	missing_ranges = []
@@ -114,11 +115,23 @@ for loop in range(loops):
 		try:
 			ts_load = np.load(os.path.join(this_savedir, "timeslides_{}.npy".format(i)))
 			timeslides = np.concatenate((timeslides, ts_load), axis = 1)
-			#remove the file
-			os.remove(os.path.join(this_savedir, "timeslides_{}.npy".format(i)))
+
 		except:
 			print("Failed to merge segment",i)
+			merge_failed = True
+			
+	if merge_failed and not fail_tolerant:
+		print("One or more files is present, but did not merge successfully.")
+		print("please check which files did not merge and run recovery on those files.")
+		exit(1)
+	
+	#once we get here, it has worked successfully. Save the merged file and remove the segments.
+	for i in range(len(valid_times)):
+		try:
+			os.remove(os.path.join(this_savedir, "timeslides_{}.npy".format(i)))
+		except:
+			print("Failed to remove segment", i)
 
 	np.save(os.path.join(this_savedir, "timeslides.npy"), timeslides)
 	print("Merged all segments")
-	os.remove(os.path.join(this_savedir, "timeslides_0.npy"))
+	#os.remove(os.path.join(this_savedir, "timeslides_0.npy"))

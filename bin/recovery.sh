@@ -102,8 +102,10 @@ temp_size=$(( ${num_triggers} * 3 ))
 # 	echo "bundling array jobs as there are more than 2048 tasks"
 # 	array=2048
 # fi
-
-
+#some jobs may be re-running because of a segment higher than 2048, so we need to rerun the job that would have produced its file
+ret=$(python3 ${INFERNUS_DIR}/bin/count_segments.py --jsonfile=$jsonfile)
+total_jobs=$(echo $ret | awk '{print $NF}')
+echo "total_jobs: $total_jobs"
 #array=8
 
 #${array}
@@ -141,7 +143,7 @@ echo $cleanup
 submit_file=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['submit_script'])")
 
 #we now want to run the plotting code
-plotting=$(sbatch --job-name=${jobname}_plotting --output=$savedir/../logs/%x.log --time=01:00:00 --mem=30G --dependency=afterok:${cleanup} \
+plotting=$(sbatch --job-name=${jobname}_plotting --output=$savedir/../../logs/%x.log --time=01:00:00 --mem=30G --dependency=afterok:${cleanup} \
 	--parsable --wrap "python ${INFERNUS_DIR}/bin/results_summary.py --configfile=${submit_file}")
 
 echo "Plotting job ID: $plotting"

@@ -298,7 +298,12 @@ if np.all(timeslides[:,:,:,2] <= 0):
 	print("Exiting early, this should only happen if this is a segment of an injection run with no injections.")
 	#save timeslides to file
 	timeslides = timeslides.astype(np.float32)
+	print("saving timeslides to ", save_dir + "/timeslides_{}.npy".format(job_id))
 	np.save(save_dir + "/timeslides_{}.npy".format(job_id), timeslides)
+	time.sleep(2)
+	#check if the timeslides file exists
+	if os.path.exists(save_dir + "/timeslides_{}.npy".format(job_id)):
+		print("timeslides file saved successfully")
 	sys.exit(0)
 
 sess = None

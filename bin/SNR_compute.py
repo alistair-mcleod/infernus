@@ -405,51 +405,6 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 	startgps = ret["startgps"]
 	gps_dict = ret["gps_dict"]
 
-	# mask = (f['injections']['gps_time'][:] > valid_times[segment]) & (f['injections']['gps_time'][:] < valid_times[segment] + duration)
-	# n_injs = np.sum(mask)
-	# print("number of injections in this segment:", n_injs)
-
-	# gps = f['injections']['gps_time'][mask]
-	# mass1 = f['injections']['mass1_source'][mask] * (1 + f['injections']['redshift'][mask]) #TODO: simplify by replacing with detector frame masses
-	# mass2 = f['injections']['mass2_source'][mask] * (1 + f['injections']['redshift'][mask])
-	# spin1x = f['injections']['spin1x'][mask]
-	# spin1y = f['injections']['spin1y'][mask]
-	# spin1z = f['injections']['spin1z'][mask]
-	# spin2x = f['injections']['spin2x'][mask]
-	# spin2y = f['injections']['spin2y'][mask]
-	# spin2z = f['injections']['spin2z'][mask]
-	# distance = f['injections']['distance'][mask]
-	# inclination = f['injections']['inclination'][mask]
-	# polarization = f['injections']['polarization'][mask]
-	# right_ascension = f['injections']['right_ascension'][mask]
-	# declination = f['injections']['declination'][mask]
-	# optimal_snr_h = f['injections']['optimal_snr_h'][mask]
-	# optimal_snr_l = f['injections']['optimal_snr_l'][mask]
-	# if "eccentricity" in f['injections']:
-	# 	eccentricity = f['injections']['eccentricity'][mask]
-	# else:
-	# 	eccentricity = np.zeros(n_injs)
-
-	# #This is necessary for migration to numpy V2, as float32 runs into an overflow
-	# mass1 = np.array(mass1, dtype = np.float64)
-	# mass2 = np.array(mass2, dtype = np.float64)
-	# startgps = []
-	# for i in range(n_injs):
-	# 	startgps.append(np.floor(gps[i] - t_at_f(mass1[i], mass2[i], f_lower)))
-
-	# startgps = np.array(startgps)
-
-	# hgps = gps + all_detectors['H1'].time_delay_from_earth_center(right_ascension, declination, gps)
-	# lgps = gps + all_detectors['L1'].time_delay_from_earth_center(right_ascension, declination, gps)
-	# gps_dict = {'H1': hgps, 'L1': lgps}
-	# print("GPS times for injections should be correct now (injected from geocentre)")
-	# #lgps = gps + all_detectors['L1'].time_delay_from_detector(all_detectors['H1'], 
-	# #											right_ascension, 
-	# #											declination, 
-	# #											gps)
-
-	# #gps_dict = {'H1': gps, 'L1': lgps}
-
 
 template_time = mp.Value('d', 0)
 mf_time = mp.Value('d', 0)

@@ -148,7 +148,8 @@ def get_GWTC_events(m1_lower = 0.0, m2_lower = 0.0, m1_upper=1000, m2_upper=1000
 				'GWTC-2.1-confident': 'LVC',
 				'GWTC-2.1-marginal': 'LVC',
 				'GWTC-3-confident': 'LVC',
-				'GWTC-3-marginal': 'LVC'}
+				'GWTC-3-marginal': 'LVC',
+				'GWTC-4.0': 'LVC'}
 	for catalog in catalogs.keys():
 		x = pycbc.catalog.Catalog(source=catalog)
 		if exclude_marginal:

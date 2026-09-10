@@ -1,6 +1,6 @@
 #! /bin/bash
-#SBATCH --time=12:00:00
-#SBATCH --cpus-per-task=4
+#SBATCH --time=8:00:00
+#SBATCH --cpus-per-gpu=2
 #SBATCH --mem=40G
 #SBATCH --mail-type=BEGIN
 #SBATCH --account=oz016

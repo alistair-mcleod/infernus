@@ -78,8 +78,8 @@ temp_size=$(( ${num_triggers} * 3 ))
 if [ -z "$dependency" ]; then
 	echo "No dependency specified for job"
 else
-	echo "Dependency specified: $dependency"
-	triton_prefix=--dependency=afterok:${dependency}
+	echo "Dependency specified: $dependency. Note: will now start regardless of dependency completion status (i.e. success or failure)."
+	triton_prefix=--dependency=afterany:${dependency}
 fi
 
 # if [ $n_gpus -gt 0 ]; then
@@ -104,12 +104,13 @@ fi
 #0-$((array - 1))
 
 #split is the fraction of tasks that goes TO ozstar rather than NT
-split=$(( $array / 3))
+split=$(( $array / 2))
 #split=$((7 *$array / 8))
 
 
 echo "split: $split"
-inference_mem_size=$(( ${temp_size} * 3 ))
+#each trigger needs ~3GB of memory, and the general overhead is ~10GB.
+inference_mem_size=$(( ${num_triggers} * 3 + 10 ))
 
 
 if [ "$injfile" == "None" ]; then
@@ -139,9 +140,6 @@ else
 		#main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 	else
-		#new plan: split the array in half. half goes to ozstar, half to NT
-		
-		#split=$((array / 3))
 
 		main1=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=0-$((split - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --nice --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		main2=$(sbatch -J $triton_name --mem=$((mem))G --array=$((split))-$((array - 1)) --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --parsable --output=$savedir/../logs/%x_%a.log --nice ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs)

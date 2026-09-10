@@ -105,14 +105,18 @@ fi
 sleep 5
 
 cancel_cmd="scancel "
+model_dep=""
 if [ -n "$training_id" ]; then
 	cancel_cmd+="${training_id} "
+	model_dep=$model_dep":${training_id}"
 fi
 if [ -n "$validation_id" ]; then
 	cancel_cmd+="${validation_id} "
+	model_dep=$model_dep":${validation_id}"
 fi
 if [ -n "$testing_id" ]; then
 	cancel_cmd+="${testing_id} "
+	model_dep=$model_dep":${testing_id}"
 fi
 
 ##########################################################################
@@ -123,32 +127,28 @@ fi
 
 tune_name=${jobname}_tune
 n_tasks=$(jq -r '.n_workers' $model_args)
-echo "--dependency=afterok:${training_id}:${validation_id}:${testing_id}"
+echo "--dependency=afterok"${model_dep}
 
-if [ -z "$training_id" ]; then
-	echo "No training job ID found"
+if [ -z "$training_id" ] && [ -z "$validation_id" ] && [ -z "$testing_id" ]; then
+	echo "No training, validation or testing job ID found"
 	dep=""
 else
-	echo "Training job ID found: $training_id"
-	dep=--dependency=afterok:${training_id}:${validation_id}:${testing_id}
+	echo "Training, validation or testing job ID found: $training_id"
+	dep=--dependency=afterok"${model_dep}"
 fi
 
-# tuning=$(sbatch --job-name=${tune_name} --output=${jobdir}/logs/%x.log --ntasks=$n_tasks ${dep} --parsable /fred/oz016/alistair/NN_training/tune_distributed_better.sh $model_args)
+# tuning=$(sbatch --job-name=${tune_name} --output=${jobdir}/logs/%x.log --ntasks=$n_tasks --nodes=$n_tasks ${dep} --parsable /fred/oz016/alistair/NN_training/tune_distributed_better.sh $model_args)
+
 
 echo "Saving logs to" $jobdir
 
-#if we're doing tuning OR sample generation
-if [ -n "$tuning" ] || [ -n "$training_id" ]; then
-	dep="--dependency=afterok:"
-	if [ -n "$tuning" ]; then
-		echo "Tuning job ID found: $tuning"
-		dep+="${tuning}"
-	fi
-	if [ -n "$training_id" ]; then
-		echo "Training job ID found: $training_id"
-		dep+="${training_id}:${validation_id}:${testing_id}"
-	fi
-else
+#if we're doing tuning
+if [ -n "$tuning" ]; then
+	dep="--dependency=afterok:"${tuning}
+fi
+
+#check if dep is an empty string
+if [ -z "$dep" ]; then
 	echo "No tuning or sample generaton job ID found, proceeding to training without dependencies"
 	dep=""
 fi
@@ -157,12 +157,8 @@ fi
 #alternatively, hardcode a dependency here
 #dep="--dependency=afterok:"
 
-#tuning, no samplegen
-#no tuning, samplegen
-echo "dependency: $dep"
 
-#TODO: generalise to not be reliant on my code
-#0-$((num_models - 1))
+echo "dependency: $dep"
 
 #check if a model repo already exists in the target location. If it does, skip training
 if [ -f "${savedir}/model_repositories/repo_1/model_full_0/1/model.onnx" ]; then
@@ -191,6 +187,18 @@ inj_id=$(echo $inj | awk '{print $NF}')
 
 echo "BG job ID: $BG_id"
 echo "Injection job ID: $inj_id"
+
+#check if there's a 'noninj' key in the json file, and if so, submit that job as well
+# if jq -e '.noninj_args' $dataset_file > /dev/null; then
+# 	echo "Non-injection args provided, submitting non-injection job"
+# 	noninj_args=$(jq -r '.noninj_args' $dataset_file)
+# 	noninj=$(bash ${INFERNUS_DIR}/bin/filter_and_predict.sh ${noninj_args} ${prep_repos})
+# 	noninj_id=$(echo $noninj | awk '{print $NF}')
+# 	echo "Non-injection job ID: $noninj_id"
+# else
+# 	echo "No non-injection args provided, skipping non-injection job"
+# 	noninj_id=""
+# fi
 
 
 #real event job
@@ -223,5 +231,5 @@ echo "Trying plotting code"
 echo "Log directory: $jobdir"
 
 #${BG_id}:${inj_id}:${real_events}
-plotting=$(sbatch --job-name=${jobname}_plotting --output=${jobdir}/logs/${jobname}_plotting.log --time=04:00:00 --mem=30G --dependency=afterok:${BG_id}:${inj_id}:${real_events} \
+plotting=$(sbatch --job-name=${jobname}_plotting --output=${jobdir}/logs/${jobname}_plotting.log --time=04:00:00 --mem=60G --dependency=afterok:${BG_id}:${inj_id}:${real_events} \
 	--parsable --wrap "python ${INFERNUS_DIR}/bin/results_summary.py --configfile=${plotting_args}")

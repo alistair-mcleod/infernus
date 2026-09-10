@@ -168,7 +168,12 @@ if args.injindex >= 0:
 	save_dir = os.path.join(save_dir, "inj_" + str(inj_index))
 	print("New save directory is ", save_dir)
 
-cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+if "SLURM_CPUS_PER_TASK" in os.environ:
+	cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+elif "SLURM_CPUS_PER_GPU" in os.environ:
+	cpus = int(os.environ["SLURM_CPUS_PER_GPU"])
+else:
+	cpus = os.cpu_count()
 print("running on {} cpus".format(cpus))
 
 try:
@@ -228,7 +233,12 @@ def initialise_server(
 	return triton_client, triton_client2, inputh, inputl, input_dt, output, outputh, outputl, output_full
 
 if streamline:
-	myfolder = save_dir
+	#print("New save folder for streamline mode: scratch dir!")
+	#get the $USER environment variable
+	user= os.environ['USER']
+	print("user is", user)
+
+	myfolder = os.path.join("/aphid/scratch-3month/", user, save_dir.strip("/"))
 else:
 	if injection_SNR_dir is not None:
 		myfolder = injection_SNR_dir

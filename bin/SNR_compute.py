@@ -92,6 +92,12 @@ print("number of CPUs:", n_cpus)
 
 maxnoisesegs = args["max_noise_segments"]
 
+if "JOBFS" in os.environ:
+	print("On Ozstar")
+	ozstar = True
+else:
+	print("On CIT")
+	ozstar = False
 
 try:
 	template_bank_dir = args["template_bank_dir"]
@@ -100,7 +106,12 @@ try:
 	templates, _, _= load_pycbc_templates(template_bank_name, template_bank_dir)
 	print("loading templates from text file")
 except:
-	template_bank = args["template_bank"]
+	if ozstar:
+		template_bank = args["template_bank"]
+	else:
+		print("On CIT, getting template bank from cwd")
+		template_bank = os.path.basename(args["template_bank"])
+
 	templates = load_pycbc_templates_from_hdf(template_bank)
 	print("number of templates:", len(templates))
 	
@@ -153,10 +164,28 @@ save_dir = args["save_dir"]
 num_time_slides = args["n_timeslides"]
 num_triggers = args["num_triggers"]
 if streamline:
-	myfolder = save_dir
+	if ozstar:
+		#take advantage of the new scratch storage 
+		#get the $USER environment variable
+		user= os.environ['USER']
+		print("user is", user)
+		#need to get rid of the leading slash in save_dir if it exists
+		#we create the whole save_dir path inside the scratch folder to ensure we use a unique path
+		myfolder = os.path.join("/aphid/scratch-3month/", user, save_dir.strip("/"))
+		os.makedirs(myfolder, exist_ok=True)
+	else:
+		myfolder = save_dir #TODO: handle background runs on CIT. Use the scratch dir eventually.
 else:
-	myfolder = os.environ['JOBFS']
+	if ozstar:
+		myfolder = os.environ['JOBFS']
+		
+	else:
+		myfolder = os.getcwd()
+		print("Using current working directory:", myfolder)
+		#myfolder = "/srv"
+
 	os.makedirs(myfolder, exist_ok=True)
+
 print("saving to", myfolder)
 
 try:
@@ -247,6 +276,14 @@ else:
 		if inj_index is not None:
 			injfile = injfile[inj_index]
 		print("injecting events from file", injfile)
+
+if not ozstar:
+	#need to modify the injfile path if it's not None and not "real" or "noninj"
+	#if injfile is not None and injfile != "real" and injfile != "noninj":
+	#	injfile_name = os.path.join("/srv", os.path.basename(injfile))
+	print("How many CPUs are available?", os.cpu_count())
+	print("How does this compare to n_workers?", n_workers)
+
 
 if isinstance(noise_dir, list) or injfile == "real":
 	print("Using new noise loading")
@@ -379,8 +416,10 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 	print("using injection file", injfile)
 
 	#load the HDF file
-
-	f = h5py.File(injfile, 'r')
+	if ozstar:
+		f = h5py.File(injfile, 'r')
+	else:
+		f = h5py.File(os.path.basename(injfile), 'r')
 	#now use the key to tell which obs run this file is from
 	if "injections" in f:
 		ret = load_O3_injections(f, valid_times[segment], valid_times[segment] + duration, f_lower, verbose = True)
@@ -954,13 +993,15 @@ print("timeslides dtype:", timeslides.dtype)
 print("SNR_array dtype:", SNR_array.dtype)
 
 #get the size of myfolder
-size_gb = sum(os.path.getsize(f) for f in os.listdir(myfolder) if os.path.isfile(f))/ (1024 ** 3)
-print("myfolder size:", size_gb, "GB")
-if size_gb > 500:
-	print("folder is larger than 500 GB, exiting without saving!")
-	exit(1)
-else:
-	print("folder is smaller than 500 GB, saving timeslides and SNR array")
+#first print the files present in myfolder
+# print("files in myfolder:", os.listdir(myfolder))
+# size_gb = sum(os.path.getsize(f) for f in os.listdir(myfolder) if os.path.isfile(f))/ (1024 ** 3)
+# print("myfolder size:", size_gb, "GB")
+# if size_gb > 500:
+# 	print("folder is larger than 500 GB, exiting without saving!")
+# 	exit(1)
+# else:
+# 	print("folder is smaller than 500 GB, saving timeslides and SNR array")
 np.save(os.path.join(myfolder,"timeslides_{}_0.npy".format(job_id)), timeslides)
 #save SNR array to file
 np.save(os.path.join(myfolder,"SNR_array_{}_0.npy".format(job_id)), SNR_array)

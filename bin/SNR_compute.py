@@ -320,10 +320,14 @@ if injfile == "real":
 	#events = get_real_events(ifos = ifos, m1_lower = args["template_mass1_min"], m2_lower = args["template_mass2_min"], \
 	#					  				m1_upper = args["template_mass1_max"], m2_upper = args["template_mass2_max"], exclude_marginal = False, padding = duration)
 	events = get_real_events(ifos = ifos, m1_lower = 1, m2_lower = 1, \
-										m1_upper = 1000, m2_upper = 1000, exclude_marginal = False, padding = duration)
+										m1_upper = 1000, m2_upper = 1000, exclude_marginal = False, padding = duration, require_centred=False)
 	event = list(events.keys())[segment]
 	print("Since I'm job number", job_id, "I'm looking for event", event)
 	print("Total number of events: ", len(list(events.keys())))
+	if "offset" in events[event]:
+		if events[event]['offset'] != 0:
+			print("Note: Event has an offset of", events[event]['offset'], "seconds.")
+			events[event]['gps'] += events[event]['offset']
 	psds = {}
 	for ifo in ifos:
 		psds[ifo] = get_data_from_OzStar(events[event]['gps']-duration/2, duration, ifo)
@@ -739,6 +743,8 @@ if injfile is not None and injfile != "noninj" and injfile != "real":
 					temp_f_lower = 25
 					print("Increasing f_lower to 25 Hz as IMRPhenomXPHM has issues with LOW f_lowers.")
 					#print("Low mass with XPHM! Find a workaround to it consuming a huge amount of resources", flush = True)
+				elif t_at_f(mass1[k], mass2[k], 10) > 100:
+					temp_f_lower = 20
 				else:
 					temp_f_lower = 15
 				

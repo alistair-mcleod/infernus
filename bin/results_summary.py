@@ -23,6 +23,7 @@ if args.configfile.split("/")[-1] == "submit.json":
 	submit_args = json.load(open(args.configfile))
 	inj_args = json.load(open(submit_args['injection_args']))
 	bg_args = json.load(open(submit_args['background_args']))
+	real_args = json.load(open(submit_args['real_event_args']))
 	noise_dir = inj_args["noise_dir"]
 	mdc_file = inj_args["injfile"]
 	if isinstance(mdc_file, list):
@@ -31,12 +32,13 @@ if args.configfile.split("/")[-1] == "submit.json":
 		mdc_file = mdc_file[int(inj_args['bin'][-1])]
 	else:
 		inj_file = os.path.join(inj_args['save_dir'], "timeslides.npy")
-	model_val_dir = os.path.join(inj_args['jobdir'], "results", inj_args['bin'])
+	model_val_dir = os.path.join(inj_args['save_dir'].split("injections")[0], "results", inj_args['bin'])
+	#model_val_dir = os.path.join(inj_args['jobdir'], "results", inj_args['bin'])
 	os.makedirs(model_val_dir, exist_ok = True)
 	print("Model val dir: ", model_val_dir)
 	bg_file = os.path.join(bg_args['save_dir'], "timeslides.npy")
 	print("TODO: generalise to multiple injection files!")
-	real_dir_root = os.path.join(inj_args['jobdir'], "real_events", inj_args['bin'])
+	real_dir_root = real_args['save_dir']
 	real_dirs = sorted(os.listdir(real_dir_root))
 	print("Real dirs: ", real_dirs)
 	#also get the trigger selection from the submit args
@@ -50,35 +52,33 @@ if args.configfile.split("/")[-1] == "submit.json":
 			trigger_selection = np.median
 	else:
 		trigger_selection = np.median
-
-
 else:
+	raise ValueError("Submitted file should be a submit.json file, others are now deprecated.")
+	# #handle passing a bg/inj file directly, these files should be in the model_val_dir
+	# if args.configfile.split("/")[-1] in ["inj.json", "BG.json"]:
+	# 	print("Loading BG/INJ file directly, assuming model_val_dir is parent directory")
+	# 	model_val_dir = os.path.dirname(args.configfile)
+	# else:
+	# 	model_val_dir = json.load(open(args.configfile))['save_dir']
 
-	#handle passing a bg/inj file directly, these files should be in the model_val_dir
-	if args.configfile.split("/")[-1] in ["inj.json", "BG.json"]:
-		print("Loading BG/INJ file directly, assuming model_val_dir is parent directory")
-		model_val_dir = os.path.dirname(args.configfile)
-	else:
-		model_val_dir = json.load(open(args.configfile))['save_dir']
+	# print("Model val dir: ", model_val_dir)
+	# #print("TODO: REVERT LOADING LINE!")
+	# inj_args = json.load(open(os.path.join(model_val_dir, "inj.json")))
+	# #inj_args = json.load(open(model_val_dir + "/inj_long.json"))
+	# noise_dir = inj_args["noise_dir"]
+	# print("Noise dir is ", noise_dir)
+	# mdc_file = inj_args["injfile"]
 
-	print("Model val dir: ", model_val_dir)
-	#print("TODO: REVERT LOADING LINE!")
-	inj_args = json.load(open(os.path.join(model_val_dir, "inj.json")))
-	#inj_args = json.load(open(model_val_dir + "/inj_long.json"))
-	noise_dir = inj_args["noise_dir"]
-	print("Noise dir is ", noise_dir)
-	mdc_file = inj_args["injfile"]
-
-	bg_file = os.path.join(model_val_dir, "BG", "timeslides.npy")
-	inj_file = os.path.join(model_val_dir, "inj", "timeslides.npy")
-	#inj_file = os.path.join(model_val_dir, "inj_long", "timeslides.npy")
-	real_dir_root = os.path.dirname(inj_args['save_dir'])
-	real_dirs = sorted(os.listdir(real_dir_root))
+	# bg_file = os.path.join(model_val_dir, "BG", "timeslides.npy")
+	# inj_file = os.path.join(model_val_dir, "inj", "timeslides.npy")
+	# #inj_file = os.path.join(model_val_dir, "inj_long", "timeslides.npy")
+	# real_dir_root = os.path.dirname(inj_args['save_dir'])
+	# real_dirs = sorted(os.listdir(real_dir_root))
 
 print("Loading data from ", bg_file, inj_file)
 
 
-N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_file, pipelines = ["pycbc_hyperbank", "mbta", "gstlal"])
+N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_file, pipelines = ["pycbc", "mbta", "gstlal"])
 
 rs_index = 8
 
@@ -96,7 +96,7 @@ for i in range(zerolags.shape[0]):
 			
 m1 = inj_params["m1"]
 m2 = inj_params["m2"]
-pipeline_fars = inj_params["pipeline_fars"]
+pipeline_fars = inj_params["pipeline_fars"].copy()
 z = inj_params["z"]
 s1x = inj_params["s1x"]
 s1y = inj_params["s1y"]
@@ -107,14 +107,20 @@ s2z = inj_params["s2z"]
 p_draw = inj_params["p_draw"]
 N_draw = inj_params["N_draw"]
 
-pipelines = ['pycbc_hyperbank', 'mbta', 'gstlal']
+pipelines = ['pycbc', 'mbta', 'gstlal']
 
 
 #VT, sigma_VT = get_dsens(z, p_draw, N_draw, pipelines, pipeline_fars)
 
 upper_thresh = 1e-3
 lower_thresh = 1e-7
-OPA_threshold = 1/(3600*24*30*2)
+#OPA_threshold = 1/(3600*24*30*2)
+if inj_params['file_format'] == "O3":
+	OPA_threshold = 1/(3600*24*30*2) #1 per 2 months
+	print("Using O3 OPA threshold of 1 per 2 months")
+elif inj_params['file_format'] == "O4":
+	print("Using O4 OPA threshold of 1 per year")
+	OPA_threshold = 1/(3600*24*365.25) #1 per year
 #sys.path.append("/fred/oz016/alistair/infernus/infernus")
 #from infernus.postprocessing import preds_to_far_constrained, lognorm_fit_constrained_print,pdf_to_cdf_arbitrary
 
@@ -167,7 +173,9 @@ for i in range(8,bg.shape[2]):
 
 	#also plot the cumulative histogram with the extrapolation
 	maxval = max(np.max(nn_preds), np.max(bg_func)) + 20
-	minval = -100 
+	minval = min(bg_func)
+	#NOTE: changed minval from -100 to the minimum of the background as a. computing the extrapolation lower than the BG 
+	#is unnecessary and b. it can actually affect the calculation of the extrapolation.
 	#f = plt.figure(figsize=(3.5,3))
 	space = np.linspace(minval, maxval, 10000)
 
@@ -201,30 +209,30 @@ for i in range(8,bg.shape[2]):
 	print("NN{}: ".format(i), found['NN'+str(i)].sum())
 
 print("\npycbc, mbta, gstlal:")
-print(found['pycbc_hyperbank'].sum(), found['mbta'].sum(), found['gstlal'].sum())
+print(found['pycbc'].sum(), found['mbta'].sum(), found['gstlal'].sum())
 
-print("PyCBC unique events: ", (found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-print("MBTA unique events: ", (~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-print("GSTLAL unique events: ", (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+print("PyCBC unique events: ", (found['pycbc'] & ~found['mbta'] & ~found['gstlal']).sum())
+print("MBTA unique events: ", (~found['pycbc'] & found['mbta'] & ~found['gstlal']).sum())
+print("GSTLAL unique events: ", (~found['pycbc'] & ~found['mbta'] & found['gstlal']).sum())
 print("")
 
 
 for i in range(8,bg.shape[2]):
-	print("unique events in NN{}: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] \
+	print("unique events in NN{}: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] \
 											 & ~found['mbta'] & ~found['gstlal']).sum())
 	
 print("")
 for i in range(8,bg.shape[2]):
-	print("NN{} duo detection with PyCBC: ".format(i), (found['NN'+str(i)] & found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("NN{} duo detection with MBTA: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-	print("NN{} duo detection with GSTLAL: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+	print("NN{} duo detection with PyCBC: ".format(i), (found['NN'+str(i)] & found['pycbc'] & ~found['mbta'] & ~found['gstlal']).sum())
+	print("NN{} duo detection with MBTA: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] & found['mbta'] & ~found['gstlal']).sum())
+	print("NN{} duo detection with GSTLAL: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] & ~found['mbta'] & found['gstlal']).sum())
 
 print("")
 
 for i in range(8,bg.shape[2]):
-	print("unique PyCBC events AFTER adding NN{}: ".format(i), (found['pycbc_hyperbank'] & ~found['NN'+str(i)] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("unique MBTA events AFTER adding NN{}: ".format(i), (~found['pycbc_hyperbank'] & found['mbta'] & ~found['NN'+str(i)] & ~found['gstlal']).sum())
-	print("unique GSTLAL events AFTER adding NN{}: ".format(i), (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal'] & ~found['NN'+str(i)]).sum())
+	print("unique PyCBC events AFTER adding NN{}: ".format(i), (found['pycbc'] & ~found['NN'+str(i)] & ~found['mbta'] & ~found['gstlal']).sum())
+	print("unique MBTA events AFTER adding NN{}: ".format(i), (~found['pycbc'] & found['mbta'] & ~found['NN'+str(i)] & ~found['gstlal']).sum())
+	print("unique GSTLAL events AFTER adding NN{}: ".format(i), (~found['pycbc'] & ~found['mbta'] & found['gstlal'] & ~found['NN'+str(i)]).sum())
 
 
 from pycbc.sensitivity import volume_to_distance_with_errors
@@ -368,6 +376,8 @@ detection_list = [[] for _ in range(bg.shape[2]-8)]
 detection_fars = [[] for _ in range(bg.shape[2]-8)]
 detection_snrs = [[] for _ in range(bg.shape[2]-8)]
 total_events = 0
+detections_by_obsrun = {}
+events_by_obsrun = {}
 
 for d in real_dirs:
 	#print(d)
@@ -377,8 +387,52 @@ for d in real_dirs:
 		real_dir = os.path.join(real_dir_root, d)
 		
 		print("Processing event", d)
+		
+		if int(d[2:4]) < 17:
+			if "O1" not in detections_by_obsrun:
+				detections_by_obsrun["O1"] = [0 for _ in range(bg.shape[2]-8)]
+				events_by_obsrun["O1"] = 0
+			events_by_obsrun["O1"] += 1
+			run = "O1"
+		elif int(d[2:4]) < 19:
+			if "O2" not in detections_by_obsrun:
+				detections_by_obsrun["O2"] = [0 for _ in range(bg.shape[2]-8)]
+				events_by_obsrun["O2"] = 0
+			events_by_obsrun["O2"] += 1
+			run = "O2"
+		elif int(d[2:6]) < 1911:
+			#1911 because O3a ended in October, 2019 and O3b started in November, 2019
+			if "O3a" not in detections_by_obsrun:
+				detections_by_obsrun["O3a"] = [0 for _ in range(bg.shape[2]-8)]
+				events_by_obsrun["O3a"] = 0
+			events_by_obsrun["O3a"] += 1
+			run = "O3a"
+		elif int(d[2:4]) < 21:
+			if "O3b" not in detections_by_obsrun:
+				detections_by_obsrun["O3b"] = [0 for _ in range(bg.shape[2]-8)]
+				events_by_obsrun["O3b"] = 0
+			events_by_obsrun["O3b"] += 1
+			run = "O3b"
+		elif int(d[2:6]) < 2402:
+			#2402 because O4a ended in mid-January, 2024.
+			if "O4a" not in detections_by_obsrun:
+				detections_by_obsrun["O4a"] = [0 for _ in range(bg.shape[2]-8)]
+				events_by_obsrun["O4a"] = 0
+			events_by_obsrun["O4a"] += 1
+			run = "O4a"
+		else:
+			print("Event {} has unknown observation run...".format(d))
 
 		real_event = np.load(os.path.join(real_dir, "timeslides.npy"))[0]
+		real_idx = inj_args['duration']//2 - 100
+		offset = 0
+		#check if there is an offset file in the real_dir, if there is apply it
+		if os.path.exists(os.path.join(real_dir, "offset.txt")):
+			offset = int(np.loadtxt(os.path.join(real_dir, "offset.txt")))
+			#note that the offset is subtracted, because the offset is shifting the start GPS time of the data,
+			#which we need to 'undo' when getting the actual index of the event in the data. 
+			real_idx -= offset
+		print("Offset for event {} is {}".format(d, offset))
 
 		for i in range(8, real_event.shape[2]):
 			#note: the two below lines are super slow. We should have a sorted BG for each model,
@@ -409,15 +463,30 @@ for d in real_dirs:
 				#TODO: generalise this to other ways of picking the trigger
 				trig = np.where(real_event[real_idx,:,i] == trigger_selection(real_event[real_idx,:,i]))[0][0]
 				detection_fars[i-8].append(real_far)
-				detection_snrs[i-8].append(real_event[real_idx, 0, 2]) 
+				detection_snrs[i-8].append(real_event[real_idx, trig, 2]) 
+				detections_by_obsrun[run][i-8] += 1
 		print("Done with event", real_dir)
 		print()
 
+from infernus.postprocessing import round_two_figures
 print("Number of detections for each model:")
 for i in range(8, bg.shape[2]):
 	print("NN{}: ".format(i), detection_sum[i-8])
 
-print("Total number of events:", total_events)
+print("Total number of events:", total_events, "\n")
+
+print("fraction of events detected by each model:")
+for i in range(8, bg.shape[2]):
+	print("NN{}: ".format(i), round_two_figures(detection_sum[i-8] / total_events) if total_events > 0 else 0)
+
+print("\n\nBreakdown by observing run: (fraction in brackets)")
+for run in detections_by_obsrun:
+	print("\n{}: ".format(run), events_by_obsrun[run], "events")
+	for i in range(8, bg.shape[2]):
+		print("  NN{}: ".format(i), detections_by_obsrun[run][i-8], " (", round_two_figures(detections_by_obsrun[run][i-8] / events_by_obsrun[run]) if events_by_obsrun[run] > 0 else 0, ")")
+	#print("  Fraction detected: ", sum(detections_by_obsrun[run]) / events_by_obsrun[run] if events_by_obsrun[run] > 0 else 0)
+
+
 
 from infernus.real_utils import get_GWTC_events
 events = get_GWTC_events(m1_lower = 0, m2_lower = 0, m1_upper=1000, m2_upper=1000, exclude_marginal = False)
@@ -433,7 +502,7 @@ for i in range(8, bg.shape[2]):
 		print("Pipeline network SNR: ", detection_snrs[i-8][detection_list[i-8].index(event)])
 		print("Model FAR (HZ): ", detection_fars[i-8][detection_list[i-8].index(event)])
 		print("Model IFAR (yrs): ", round(1 /(detection_fars[i-8][detection_list[i-8].index(event)]*(3600 * 24 * 365.25)),2) )
-		if detection_fars[i-8][detection_list[i-8].index(event)] > OPA_threshold/6:
+		if detection_fars[i-8][detection_list[i-8].index(event)] > (1/(3600*24*365.25)):
 			print("NOTE: this event is not detected at the 1/year level")
 		print()
 
@@ -446,7 +515,7 @@ for m in range(8,bg.shape[2]):
 
 	for i, ax in enumerate(axes.flatten()):
 		
-		sig_lognorm_m1 = 0.05
+		sig_lognorm_m1 = 0.1
 		sig_lognorm_m2 = 0.2
 
 		smax_ns = 0.4
@@ -474,7 +543,7 @@ for m in range(8,bg.shape[2]):
 		#for j in range(8, bg.shape[2]):
 		#	if np.sum(pipeline_fars['NN'+str(j)] < OPA_threshold) > np.sum(pipeline_fars['NN'+str(best)] < OPA_threshold):
 		#		best = j
-		pipelines = ['pycbc_hyperbank', 'mbta', 'gstlal']
+		pipelines = ['pycbc', 'mbta', 'gstlal']
 		pipelines.append("NN{}".format(m))
 		#print("Best NN is NN{}".format(best))
 		
@@ -521,3 +590,76 @@ for m in range(8,bg.shape[2]):
 
 	plt.savefig(os.path.join(model_val_dir, "sens_vs_far_{}.png".format(m)), dpi = 300)
 	plt.clf()
+
+
+#now we do a proper plot with just the best model
+
+print("Now plotting full V plot with just the best model, model: NN{}".format(best))
+
+from infernus.postprocessing import V_summary_plot
+import matplotlib
+matplotlib.rcParams['text.usetex'] = True
+matplotlib.rcParams['font.size'] = 8
+matplotlib.rcParams['savefig.dpi'] = 300
+matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
+matplotlib.rcParams['legend.fontsize'] = 8
+matplotlib.rcParams['grid.linewidth'] = 0.3
+matplotlib.rcParams['grid.linestyle'] = '-'
+matplotlib.rcParams['grid.color'] = "#DDDDDD"
+#mpl.rcParams['text.usetex'] = True
+matplotlib.rcParams['font.family'] = 'serif'
+matplotlib.rcParams['font.size'] = 15
+matplotlib.rcParams['savefig.dpi'] = 300
+from matplotlib import pyplot as plt
+plt.rcParams['hatch.linewidth'] = 0.5
+
+
+
+#now add the best model to the pipeline fars
+#inj_params["pipeline_fars"]["NN"] = pipeline_fars['NN'+str(best)]
+#print("Pipeline fars inj params: ", inj_params['pipeline_fars'].keys())
+from infernus.postprocessing import compute_NN_fars
+
+master_inj_params = None
+mdc_files = inj_args["injfile"]
+for i in range(len(mdc_files)):
+    print("MDC file: ", i)
+    #NOTE: models should do the MDCs in a specific way. Bin_0 should do mdc 0 first, but bin_1 should do mdc 1 first.
+    #The above matters because we want to select the 'best' model based on the appropriate parameter space.
+    #If we already have 'best', we can just go in order.
+    inj_file = os.path.join(inj_args['save_dir'], "inj_{}".format(i), "timeslides.npy")
+    N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_files[i], pipelines = ["pycbc", "mbta", "gstlal"])
+    pipeline_fars = compute_NN_fars(bg_file, inj_file, inj_params, trigger_selection, return_best_only = best)
+
+    pipelines = list(inj_params['pipeline_fars'].keys())
+    #add pipeline fars to inj_params
+    for key in pipeline_fars.keys():
+        inj_params['pipeline_fars'][key] = pipeline_fars[key]
+
+    #How to compute any (No NN): just take the minimum FAR across all pipelines excluding the NNs
+    inj_params['pipeline_fars']['any'] = np.min(np.array(list(inj_params['pipeline_fars'].values())), axis = 0)
+    inj_params['pipeline_fars']['any (no NN)'] = np.min(np.array([inj_params['pipeline_fars'][p] for p in pipelines if "NN" not in p]), axis = 0)
+
+    pipelines = list(inj_params['pipeline_fars'].keys())
+    if i == 0:
+        master_inj_params = inj_params
+        print("number of injections in master inj params: ", len(master_inj_params['pipeline_fars']['pycbc']))
+    else:
+        #check that the pipeline fars are the same across the different mdc files, if not raise an error
+        for key in inj_params['pipeline_fars'].keys():
+            if key not in master_inj_params['pipeline_fars']:
+                raise ValueError(f"Pipeline {key} not found in master inj params")
+            #now we can append the fars from this mdc file to the master inj params
+            master_inj_params['pipeline_fars'][key] = np.concatenate((master_inj_params['pipeline_fars'][key], inj_params['pipeline_fars'][key]))
+        print("number of injections in master inj params: ", len(master_inj_params['pipeline_fars']['pycbc']))
+        for key in inj_params.keys():
+            if key in ["file_format", "pipeline_fars", "pipelines", "N_draw"]:
+                continue
+            else:
+                #print(key)
+                #append
+                master_inj_params[key] = np.concatenate((master_inj_params[key], inj_params[key]))
+
+fig, axes = V_summary_plot(master_inj_params)
+
+plt.savefig(os.path.join(model_val_dir, "V_summary.png"), dpi = 300)

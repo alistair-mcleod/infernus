@@ -1056,6 +1056,10 @@ def plot_CBC_sensitive_volume(pipelines, sensitivities, sigmas, sigma_threshold 
 
     for j, ax in enumerate(axes):
 
+        if j >= len(order):
+            ax.set_axis_off()
+            continue
+        print("Plotting pipeline: ", order[j])
         for i in range(len(M1)):
 
             m1 = M1[i]

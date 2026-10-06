@@ -109,8 +109,8 @@ echo "total_jobs: $total_jobs"
 #array=8
 
 #${array}
-
-inference_mem_size=$(( ${temp_size} * 3 ))
+#each trigger needs ~3GB of memory, and the general overhead is ~10GB.
+inference_mem_size=$(( ${num_triggers} * 3 + 10 ))
 
 if [ -z $array ]; then
 	echo "array not specified, only running cleanup"
@@ -120,7 +120,6 @@ else
 		#main=$(ssh farnarkle2 "sbatch -J $triton_name --mem=$((mem))G --array=${array} --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs")
 		main=$(sbatch -J $triton_name --mem=$((mem))G --array=${array} --cpus-per-task=$((tasks)) --tmp=${temp_size}GB ${triton_prefix} --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/SNR_submit.sh $jsonfile $total_jobs)
 		#--dependency=aftercorr:$main
-		inference_mem_size=$(( ${temp_size} * 3 ))
 		TRITON=$(ssh farnarkle2 "sbatch -J $server_name --array=${array} --gres=gpu:${gpus_per_server} --dependency=aftercorr:$main --mem=${inference_mem_size}GB --output=$savedir/../logs/%x_%a.log --parsable ${INFERNUS_DIR}/bin/start_triton.sh $jsonfile")
 		main=$TRITON
 
@@ -142,6 +141,10 @@ echo $cleanup
 #need to use the submit script instead of the inj submit script
 submit_file=$(cat $jsonfile | python3 -c "import sys, json; print(json.load(sys.stdin)['submit_script'])")
 
+plot_jobname="${jobname}_plotting"
+plot_jobname=${plot_jobname/inj_/}
+plot_jobname=${plot_jobname/BG_/}
+echo "plot_jobname: $plot_jobname"
 #we now want to run the plotting code
 plotting=$(sbatch --job-name=${jobname}_plotting --output=$savedir/../../logs/%x.log --time=01:00:00 --mem=30G --dependency=afterok:${cleanup} \
 	--parsable --wrap "python ${INFERNUS_DIR}/bin/results_summary.py --configfile=${submit_file}")

@@ -1,6 +1,9 @@
 # Infernus
 A repository for gravitational wave inference, background collection, and injection runs with deep learning models. Specifically built to work with deep learning models that take gravitational wave signal-to-noise (SNR) time series as input.
 
+## IMPORTANT!
+This is the legacy branch for `infernus` which should still retain support for the old method of inference that was used in [Mcleod+2025](https://link.aps.org/doi/10.1103/PhysRevD.111.024035). This method is now disfavoured as it required a large number of inference requests and hence a lot of GPU resources. Make sure this is the branch you want to use before continuing.
+
 ## Installation
 
 This repository has `GWSamplegen` as a dependency. Follow the installation instructions [here](https://github.com/alistair-mcleod/GWSamplegen). Then `cd` out of GWSamplegen and clone this repository with:

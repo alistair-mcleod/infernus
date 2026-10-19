@@ -28,33 +28,6 @@ apptainer build tritonserver.sif docker://nvcr.io/nvidia/tritonserver:22.11-py3
 3. You should now be able to run background and injection runs. Make a copy of the .json file used in `make_model_repos.sh`, and ensure all the entries are set up correctly. Importantly, change `save_dir` to a new subfolder under the original `save_dir`. e.g. if you ran `make_model_repos.sh` with `save_dir: "runs/my_model"`, for a background run in week 3 change it to `save_dir: "runs/my_model/background_week3"`. Finally, run `share/submit.sh your_config.json` to submit all the necessary SLURM jobs.
 
 
-## Performance options
-
-The filtering path caches each template's single-detector peaks for reuse across
-integer-second background slides. It gathers coincidence neighborhoods and
-winning windows by shifted indices, preserving the original candidate grouping,
-coincidence window and tie rules. Set `background_timeslide_optimization` to
-`false` to use the original rolling path.
-
-Install the optional compiled selector with `pip install '.[performance]'`.
-Without Numba, the same peak cache uses NumPy. Both paths expect finite SNR
-amplitudes and the original aligned time grid.
-
-When GWSamplegen provides `NumpyMatchedFilterBatch`, direct filtering reuses its
-buffers across detectors and processes only retained samples after the full
-inverse FFT. Set `matched_filter_optimization` to `false` to use the original
-kernel. Older GWSamplegen installations and chi-squared reweighting retain the
-original filtering path.
-
-NN input packing and output placement use batch array operations, preserving
-model choice, batch padding, request order, score averaging and invalid slots.
-
-`results_summary.py` prepares the model backgrounds once and reuses their sorts
-and FAR fits across injection files. Other callers can use
-`prepare_nn_background` and pass its result to `compute_NN_fars`. For repeated
-recovery plots with the same injection population, pass the result of
-`prepare_missed_vs_found` as `plot_inputs` to `plot_missed_vs_found`.
-
 ## Configuration file options
 
 All of the options for creating a Triton server model repository, and running background and injection runs are stored in `.json` files.

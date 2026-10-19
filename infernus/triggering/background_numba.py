@@ -102,4 +102,3 @@ def select_zerolags(data, primary_args, primary_maxes, seconds, buffer_length,
                 for column in range(6):
                     output[second_index, 0, column] = key[column]
                 seen.add(key)
-

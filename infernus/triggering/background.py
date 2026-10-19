@@ -53,8 +53,9 @@ class BackgroundTimeslideCache:
             else:
                 self._compiled_select = select_zerolags
 
-    def get_zerolags(self, shift_seconds, snr_thresh=4,
-                    both_detectors_above_thresh=False, max_snr_ratio=False):
+    def get_zerolags_optimised(self, shift_seconds, snr_thresh=4,
+                             both_detectors_above_thresh=False,
+                             max_snr_ratio=False):
         """Select one trigger per second for an integer shift and finite cuts."""
         if self._compiled_select is not None and self.seconds.size:
             # NumPy 1 and 2 promote Python and NumPy scalars differently.
@@ -127,7 +128,7 @@ class BackgroundTimeslideCache:
                 zerolags.append([[-1, -1, -1, -1, -1, -1]])
         return zerolags
 
-    def window(self, template_id, start, end, shift_seconds):
+    def get_shifted_snr_window(self, template_id, start, end, shift_seconds):
         """Copy an in-bounds H/L window with the reference's positive L roll."""
         output = np.empty((2, end - start), dtype=self.data.dtype)
         output[0] = self.data[0, template_id, start:end]

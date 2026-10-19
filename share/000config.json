@@ -1,0 +1,288 @@
+{
+	"global": {
+		"jobname": "run_name",
+		"sample_rate": 2048,
+		"run_dir": "/path/to/run",
+		"template_dir": "path/to/template_banks",
+		"template_bank": "path/to/template_banks/bank.hdf",
+		"td_approximant": {
+			"10000": "IMRPhenomXPHM"
+		},
+		"fd_approximant": {
+			"4": "TaylorF2",
+			"10000": "SEOBNRv4_ROM"
+		},
+		"detectors": [
+			"H1",
+			"L1"
+		],
+		"chisq": false,
+		"n_chisq_bins": 16,
+		"BG_noise_dir": [
+			[
+				1370614420,
+				1371219220
+			]
+		],
+		"inj_noise_dir": [
+			[
+				1371219220,
+				1376057620
+			]
+		],
+		"noninj_noise_dir": [
+			[
+				1371219220,
+				1372428820
+			]
+		],
+		"p_astro_noise_dir": [
+			[
+				1371219220,
+				1372428820
+			]
+		],
+		"p_astro_injfile": [
+			"/path/to/injections/bns_p_astro_injections.hdf",
+			"/path/to/injections/nsbh_p_astro_injections.hdf",
+			"/path/to/injections/bbh_p_astro_injections.hdf"
+		],
+		"duration": 1024,
+		"n_timeslides": 100,
+		"num_triggers": 5,
+		"max_noise_segments": 100000,
+		"delete_SNR_on_success": false,
+		"SNR_limit": 100,
+		"both_detectors_above_thresh": false,
+		"shuffle_templates": false,
+		"binned_triggers": "templates",
+		"trigger_selection": "np.max"
+	},
+	"datasets": {
+		"run_dir": "/path/to/training/datasets",
+		"train": {
+			"SNR_mem": 160,
+			"seed": 1234,
+			"n_signal_samples": 200000,
+			"n_noise_samples": 200000,
+			"templates_per_waveform": 5,
+			"noise_segments": [
+				[
+					1369404820,
+					1370009620
+				],
+				[
+					1371219220,
+					1371824020
+				],
+				[
+					1373033620,
+					1373638420
+				]
+			],
+			"SNR_prior": "PowerLaw",
+			"SNR_power": -2.5,
+			"SNR_min": 6.0,
+			"SNR_max": 200.0
+		},
+		"val": {
+			"SNR_mem": 90,
+			"seed": 981013,
+			"n_signal_samples": 200000,
+			"n_noise_samples": 200000,
+			"templates_per_waveform": 1,
+			"noise_segments": [
+				[
+					1370009620,
+					1370614420
+				],
+				[
+					1371824020,
+					1372428820
+				],
+				[
+					1373638420,
+					1374243220
+				]
+			],
+			"SNR_prior": "PowerLaw",
+			"SNR_power": -2.5,
+			"SNR_min": 6.0,
+			"SNR_max": 200.0
+		},
+		"dsens": {
+			"SNR_mem": 90,
+			"seed": 821014,
+			"n_signal_samples": 100000,
+			"n_noise_samples": 900000,
+			"templates_per_waveform": 1,
+			"noise_segments": [
+				[
+					1370614420,
+					1371219220
+				]
+			],
+			"SNR_prior": "PowerLaw",
+			"SNR_power": -2.5,
+			"SNR_min": 6.0,
+			"SNR_max": 200.0
+		},
+		"params_mem": 60,
+		"glitch_frac": [
+			0.3,
+			0.3
+		],
+		"noise_type": "Real",
+		"metricParam_source": "PyCBC_98_aligned_spin",
+		"bank_type": "pycbc_smart_match",
+		"smart_match_limit": 250,
+		"duration": 1024,
+		"seconds_before": 1,
+		"seconds_after": 1,
+		"network_snr_threshold": 6,
+		"detector_snr_threshold": 0,
+		"mass_ratio_prior": "PowerLaw",
+		"mass_ratio_min": 0.01,
+		"mass_ratio_max": 1.0,
+		"mass1prior": "Uniform",
+		"mass2prior": "Uniform",
+		"mass1_power": -2.35,
+		"mass2_power": 1,
+		"mass1_min": 1.0,
+		"mass1_max": 100,
+		"mass2_min": 1.0,
+		"mass2_max": 100,
+		"ra_prior": "Uniform",
+		"dec_prior": "Cosine",
+		"ra_min": 0.0,
+		"ra_max": 1.0,
+		"dec_min": 0.0,
+		"dec_max": 1.0,
+		"inc_prior": "Sine",
+		"inc_min": 0.0,
+		"inc_max": 1.0,
+		"pol_prior": "Uniform",
+		"pol_min": 0.0,
+		"pol_max": 1.0,
+		"constrain_to_templates": true,
+		"glitch_snr_threshold": 8.0,
+		"dchirp_scaling": true
+	},
+	"models": {
+		"n_gpus": 8,
+		"gpus_per_server": 1,
+		"cleanup_mem": 40,
+		"metamodel_trials": 10,
+		"metamodel_jobs": 8,
+		"n_workers": 12,
+		"net_architecture": "2det_deltat",
+		"infernus_dir": "/path/to/infernus/",
+		"final_model_candidates": 8,
+		"batch_size": 128,
+		"triton_server": "/path/to/triton_server/containers_22.11/tritonserver.sif",
+		"inference_rate": 16,
+		"injfile": [
+			"/path/to/injections/bns_injections.hdf",
+			"/path/to/injections/nsbh_injections.hdf",
+			"/path/to/injections/bbh_injections.hdf"
+		]
+	},
+	"bins": {
+		"0": {
+			"dataset": {
+				"params_mem": 180,
+				"chirp_mass_prior": "TriUniform",
+				"chirp_mass_power": 0.666,
+				"chirp_mass_min": 0.87055,
+				"chirp_mass_max": 2.176,
+				"mass_ratio_power": 0.0,
+				"spin_type": "Isotropic",
+				"spin1zprior": "Uniform",
+				"spin2zprior": "Uniform",
+				"spin1z_min": -0.4,
+				"spin1z_max": 0.4,
+				"spin2z_min": -0.4,
+				"spin2z_max": 0.4,
+				"d_prior": "Triangular",
+				"d_min": 10.0,
+				"d_max": 400.0
+			},
+			"f_lower": 20,
+			"template_mass1_min": 0,
+			"template_mass1_max": 3,
+			"template_mass2_min": 0,
+			"template_mass2_max": 3,
+			"models": {
+				"tuning_dir": "/path/to/tuning/bns",
+				"mem": 50,
+				"ntasks": 8
+			}
+		},
+		"1": {
+			"dataset": {
+				"params_mem": 120,
+				"chirp_mass_prior": "TriUniform",
+				"chirp_mass_power": 0.5,
+				"chirp_mass_min": 1.465,
+				"chirp_mass_max": 9.93,
+				"mass_ratio_power": -0.5,
+				"mass_ratio_min": 0.0125,
+				"mass_ratio_max": 0.8333,
+				"mass1_min": 1.0,
+				"mass1_max": 80,
+				"mass2_min": 1.0,
+				"mass2_max": 2.5,
+				"spin_type": "Isotropic",
+				"spin1zprior": "Uniform",
+				"spin2zprior": "Uniform",
+				"spin1z_min": -0.998,
+				"spin1z_max": 0.998,
+				"spin2z_min": -0.4,
+				"spin2z_max": 0.4,
+				"d_prior": "Triangular",
+				"d_min": 10.0,
+				"d_max": 400.0
+			},
+			"f_lower": 20,
+			"template_mass1_min": 3,
+			"template_mass1_max": 500,
+			"template_mass2_min": 0,
+			"template_mass2_max": 3,
+			"models": {
+				"tuning_dir": "/path/to/tuning/nsbh",
+				"mem": 110,
+				"ntasks": 32
+			}
+		},
+		"2": {
+			"dataset": {
+				"chirp_mass_prior": "PowUniform",
+				"chirp_mass_power": -1.5,
+				"chirp_mass_r": 0.5,
+				"chirp_mass_min": 2.612,
+				"chirp_mass_max": 87.06,
+				"mass_ratio_power": -0.5,
+				"spin_type": "Isotropic",
+				"spin1zprior": "Uniform",
+				"spin2zprior": "Uniform",
+				"spin1z_min": -0.998,
+				"spin1z_max": 0.998,
+				"spin2z_min": -0.998,
+				"spin2z_max": 0.998,
+				"d_prior": "Triangular",
+				"d_min": 10.0,
+				"d_max": 400.0
+			},
+			"f_lower": 20,
+			"template_mass1_min": 3,
+			"template_mass1_max": 500,
+			"template_mass2_min": 3,
+			"template_mass2_max": 500,
+			"models": {
+				"tuning_dir": "/path/to/tuning/bbh",
+				"mem": 50,
+				"ntasks": 8
+			}
+		}
+	}
+}

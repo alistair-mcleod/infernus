@@ -1,9 +1,24 @@
 # Infernus
 A repository for gravitational wave inference, background collection, and injection runs with deep learning models. Specifically built to work with deep learning models that take gravitational wave signal-to-noise (SNR) time series as input.
 
+## Workflow Overview
+
+Broadly, infernus orchestrates the following tasks:
+
+1. Generate training,validation, and test datasets using GWSamplegen.
+2. Tune/train a deep learning model using the generated datasets.
+3. Convert the trained model(s) to a Triton Inference Server model repository for fast inference.
+4. Run background collection with the trained model(s)
+5. Inject simulated signals into data and run inference with the trained model(s)
+6. Use the results of background and injection runs to calculate false alarm rates and determine the sensitivity of the trained model(s).
+7. Perform a targeted search for known events in real data using the trained model(s).
+8. Perform a blind search in real data using the trained model(s).
+
+Not all of the tasks have to be completed in the same workflow, for example, if you already have a trained model, you can skip steps 1 and 2. Similarly, you can avoid step 8 if you only want to run a targeted search for known events.
+
 ## Installation
 
-This repository has `GWSamplegen` as a dependency. Follow the installation instructions [here](https://github.com/alistair-mcleod/GWSamplegen). Then `cd` out of GWSamplegen and clone this repository with:
+This repository has `GWSamplegen` as a dependency. Follow the installation instructions [here](https://github.com/alistair-mcleod/GWSamplegen), Then `cd` out of GWSamplegen and clone this repository with:
 
 ```
 git clone https://github.com/alistair-mcleod/infernus.git
@@ -23,36 +38,39 @@ apptainer build tritonserver.sif docker://nvcr.io/nvidia/tritonserver:22.11-py3
 
 ## Usage 
 
-1. Create a json file using the json file in the `share` directory as a template. Specify the noise directory to use, the template bank to use and where to save the run files. The noise directory should be generated using GWSamplegen's `fetch_noise.py` script. Importantly, `infernus_dir` should be the location that Infernus was cloned to. `save_dir` should be the parent directory you want to use for background or injection runs with the same model, e.g `runs/my_model`.
-2. Run `make_model_repos.sh` with the created json file as a command-line argument, e.g. `bash make_model_repos.sh share/background.json`. This will construct the save directory, and convert the tensorflow model to an onnx model for faster inference. 
-3. You should now be able to run background and injection runs. Make a copy of the .json file used in `make_model_repos.sh`, and ensure all the entries are set up correctly. Importantly, change `save_dir` to a new subfolder under the original `save_dir`. e.g. if you ran `make_model_repos.sh` with `save_dir: "runs/my_model"`, for a background run in week 3 change it to `save_dir: "runs/my_model/background_week3"`. Finally, run `share/submit.sh your_config.json` to submit all the necessary SLURM jobs.
+1. Create a json file using the `share/000config.json` file as a template. This file should contain all parameters necessary for the entire workflow, from dataset generation to background and injection runs. If necessary, specify the tuning/training directories for the model(s) you want to use. If you already have a trained model, you can skip this step. Define the noise segment(s) to use, the template bank to use, and where to save the run files. 
+2. Run make_workflow.py with the created json file as a command-line argument. This will make a workflow directory with the necessary scripts to run background and injection runs.
+3. Run the desired parts of the workflow using SLURM. The shell script `bin/run_full_workflow.sh` will queue up most of the components of the workflow except for the blind search (step 8). The blind search is not included because it requires a lot of CPU resources, and is best run when models have first been validated.
+4. To run a background/injection/p_astro/search job by itself, use `bin/filter_and_predict.sh` with the created json file as a command-line argument.
+
+If a background/injection/p_astro/search job fails due to some of the SLURM job array jobs failing, you can re-run the failed jobs using the `bin/recovery.sh` script. The cleanup log file for the failed job will include a one-liner command for conveniently re-running the failed jobs.
+
 
 
 ## Configuration file options
 
 All of the options for creating a Triton server model repository, and running background and injection runs are stored in `.json` files.
 
-* jobname: what to call the job 
-* mem: how much memory in GB to give each job. 
-* ntasks: how many CPUs to give each job. Should be equal to or greater than n_workers x (n_cleanups + 1)
-* n_array_tasks: The size of the job array.
-* n_workers: how many workers per Triton server. If your model is very lightweight, this can be increased as needed.
-* n_cleanups: for a background run, how many cleanup workers for processing  time shifts in parallel. Depending on how CPU-intensive your model is, this should be increased until there's no backlog of time shifts. Not used in injection runs.
-* cleanup_mem: how much memory to give the job that merges the predictions for all jobs in the job array.
-* save_dir: where to save the run files. Different runs with the same model should be grouped in the same parent directory, e.g. `runs/my_model/week_3` and `runs/my_model/week_4`
-* noise_dir: directory of noise files generated by GWSamplegen.
-* infernus_dir: the directory where you cloned `infernus` to.
-* template_bank_dir: directory containing the template bank to use (currently only configured for BNS template banks generated using PyCBC)
-* template_bank_file_name: file name of the template bank to use, which should be set up according to GWSamplegen.
-* injfile: set to "None" for a background run. Set to an hdf file containing injections for an injection run. The hdf file should have the same format as the injection files [here](https://zenodo.org/records/7890437). Set to "noninj" to perform a non-injection run i.e. a background with no timeslides. Set to "real" to perform a non-injection run, but without blacklisting GPS times containing known events, i.e. to search for real events.
-* n_timeslides: number of time slides to perform in a background run. Ignored if injfile is not "None".
-* max_noise_segments: to perform a shorter run, set to the desired number of noise segments to run over. Otherwise, just set to a high number (1000+)
-* duration: length of each noise segment
-* sample_rate: sample rate, in Hz. Should match the sample rate of the noise in noise_dir.
-* tf_model: location of the Tensorflow model to use for inference.
-* triton_server: location of the installed Triton Server.
-* f_lower: lower frequency cutoff to use for waveform generation.
-* batch_size: batch size of the inference requests. Used by make_model_repos.sh
-* td_approximant: time domain approximant to use for generating injection waveforms.
-* fd_approximant: frequency domain approximant to use for generating template waveforms.
-* columns: a list of inference rate and convolution window sizes to run. Should be in the format "xhz_ys". Will likely be deprecated in the future in favour of doing separate runs for each desired inference rate and window size.
+TODO: Add a full description of the configuration file options here. 
+
+
+## Citation
+
+If you use this code in your research, please cite the following paper:
+
+```
+@article{McLeod2025,
+    title = "{Binary neutron star merger search pipeline powered by deep learning}",
+    author = "McLeod, Alistair and Beveridge, Damon and Wen, Linqing and Wicenec, Andreas",
+    journal = {Phys. Rev. D},
+    volume = {111},
+    number = {2},
+    pages = {024035},
+    year = {2025},
+	month = {Jan},
+    eprint = {2409.06266},
+    archivePrefix = {arXiv},
+    primaryClass = {gr-qc},
+    doi = {10.1103/PhysRevD.111.024035},
+	url = {https://doi.org/10.1103/PhysRevD.111.024035}
+}

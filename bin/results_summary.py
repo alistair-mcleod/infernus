@@ -618,10 +618,11 @@ plt.rcParams['hatch.linewidth'] = 0.5
 #now add the best model to the pipeline fars
 #inj_params["pipeline_fars"]["NN"] = pipeline_fars['NN'+str(best)]
 #print("Pipeline fars inj params: ", inj_params['pipeline_fars'].keys())
-from infernus.postprocessing import compute_NN_fars
+from infernus.postprocessing import compute_NN_fars, prepare_nn_background
 
 master_inj_params = None
 mdc_files = inj_args["injfile"]
+background = prepare_nn_background(bg_file, trigger_selection)
 for i in range(len(mdc_files)):
     print("MDC file: ", i)
     #NOTE: models should do the MDCs in a specific way. Bin_0 should do mdc 0 first, but bin_1 should do mdc 1 first.
@@ -629,7 +630,7 @@ for i in range(len(mdc_files)):
     #If we already have 'best', we can just go in order.
     inj_file = os.path.join(inj_args['save_dir'], "inj_{}".format(i), "timeslides.npy")
     N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_files[i], pipelines = ["pycbc", "mbta", "gstlal"])
-    pipeline_fars = compute_NN_fars(bg_file, inj_file, inj_params, trigger_selection, return_best_only = best)
+    pipeline_fars = compute_NN_fars(background, inj_file, inj_params, trigger_selection, return_best_only = best)
 
     pipelines = list(inj_params['pipeline_fars'].keys())
     #add pipeline fars to inj_params

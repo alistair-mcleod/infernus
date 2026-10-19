@@ -9,6 +9,10 @@ import h5py
 from GWSamplegen.noise_utils import load_psd, get_valid_noise_times, load_gps_blacklist, get_valid_noise_times_from_segments, get_data_from_OzStar
 from GWSamplegen.waveform_utils import load_pycbc_templates, chirp_mass, select_approximant, t_at_f, maximum_f_lower
 from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq, numpy_matched_filter
+try:
+	from GWSamplegen.snr_utils_np import NumpyMatchedFilterBatch
+except ImportError:
+	NumpyMatchedFilterBatch = None
 from GWSamplegen.chisq_utils_np import reduced_chisquared_precomputed_SNR
 from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.psd import interpolate, inverse_spectrum_truncation
@@ -31,6 +35,7 @@ from infernus.real_utils import get_real_events#, get_data_from_OzStar
 #from model_utils import onnx_callback
 start = time.time()
 from infernus.triggering.zerolags import get_zerolags
+from infernus.triggering.background import BackgroundTimeslideCache
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--jobindex', type=int,default=0)
@@ -86,6 +91,7 @@ def load_pycbc_templates_from_hdf(hdf_file):
 
 args = json.load(open(argsfile, "r"))
 noise_dir = args["noise_dir"]
+background_timeslide_optimization = args.get("background_timeslide_optimization", True)
 n_cpus = args["ntasks"]
 print("number of CPUs:", n_cpus)
 
@@ -292,6 +298,12 @@ else:
 	new_noise = False
 
 
+# Chi-squared reweighting needs the full complex SNR and repeated strain rows.
+matched_filter_optimization = (
+	bool(args.get("matched_filter_optimization", True))
+	and NumpyMatchedFilterBatch is not None and not chisq
+)
+
 print(noise_dir)
 delta_t = 1/sample_rate
 f_final = sample_rate//2
@@ -485,7 +497,7 @@ def is_timeslide_valid(second,timeslide, chop_time = 0):
 #merge_time = 0
 
 
-def get_timeslide_new(i, SNR_rolled, template_ids):
+def get_timeslide_new(i, SNR_rolled, template_ids, background_cache=None):
 	global criterion_time, merge_time
 	#Get the ith timeslide. This processes all 900 seconds
 	#for each timeslide, roll the SNR array. get 'zerolags', then compare to existing array
@@ -500,17 +512,24 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 	#	SNR_rolled[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048*(i+1), axis = 1)
 	#if we're using an injfile, no time shift is necessary.
 
-	zerolags = get_zerolags(
-		data = SNR_rolled,
-		snr_thresh = 4,
-		offset = 20,
-		buffer_length = 2048,
-		overlap = int(0.2*2048),
-		num_trigs = 1,
-		chop_time = chop_idx,
-		both_detectors_above_thresh = both_detectors_above_thresh,
-		max_snr_ratio = max_snr_ratio
-	)
+	if background_cache is not None:
+		zerolags = background_cache.get_zerolags(
+			i + 1, snr_thresh=4,
+			both_detectors_above_thresh=both_detectors_above_thresh,
+			max_snr_ratio=max_snr_ratio,
+		)
+	else:
+		zerolags = get_zerolags(
+			data = SNR_rolled,
+			snr_thresh = 4,
+			offset = 20,
+			buffer_length = 2048,
+			overlap = int(0.2*2048),
+			num_trigs = 1,
+			chop_time = chop_idx,
+			both_detectors_above_thresh = both_detectors_above_thresh,
+			max_snr_ratio = max_snr_ratio
+		)
 
 	zerolags = np.array(zerolags)
 	#TODO: we're going to use the template IDs to save the SNRs, need to move this after it's already integrated into timeslides.
@@ -582,7 +601,10 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 			
 			if overwrite_criterion[j]:
 				
-				SNR_array[:,i,j,overwrite_targets[idx]] = SNR_rolled[:,tmplt[idx], start[idx]:end[idx]]
+				if background_cache is None:
+					SNR_array[:,i,j,overwrite_targets[idx]] = SNR_rolled[:,tmplt[idx], start[idx]:end[idx]]
+				else:
+					SNR_array[:,i,j,overwrite_targets[idx]] = background_cache.window(tmplt[idx], start[idx], end[idx], i + 1)
 				idx += 1
 		with merge_time.get_lock():
 			merge_time.value += time.time() - st
@@ -856,7 +878,7 @@ for ifo in range(len(ifos)):
 	strain[ifo] = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
 	strain[ifo] = highpass(strain[ifo],f_lower).to_frequencyseries(delta_f=delta_f).data
 	strain[ifo] = np.array([strain[ifo]])[:,kmin:kmax]
-	strain_np[ifo] = np.repeat(strain[ifo], n_templates, axis=0)
+	strain_np[ifo] = strain[ifo] if matched_filter_optimization else np.repeat(strain[ifo], n_templates, axis=0)
 	with strain_time.get_lock():
 		strain_time.value += time.time() - start
 
@@ -886,7 +908,7 @@ def calc_batch(i):
 			#strain = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
 			#strain = highpass(strain,f_lower).to_frequencyseries(delta_f=delta_f).data
 			#strain = np.array([strain])[:,kmin:kmax]
-			strain_np[ifo] = np.repeat(strain[ifo], n_templates, axis=0)
+			strain_np[ifo] = strain[ifo] if matched_filter_optimization else np.repeat(strain[ifo], n_templates, axis=0)
 			with strain_time.get_lock():
 				strain_time.value += time.time() - start
 			#strain_time += time.time() - start
@@ -923,6 +945,7 @@ def calc_batch(i):
 	#template_conj = np.conjugate(t_templates)
 
 	nonwindowed_SNR = np.empty((len(ifos), n_templates, slice_duration*sample_rate), dtype=np.float32)
+	matched_filter_batch = None
 
 	for ifo in range(len(ifos)):
 	
@@ -934,6 +957,10 @@ def calc_batch(i):
 			x = numpy_matched_filter(strain_np[ifo], t_templates, psds[ifos[ifo]], N, kmin, kmax, duration, delta_t, f_lower)
 			x *= reduced_chisquared_precomputed_SNR(x, t_templates, strain_np[ifo], psds[ifos[ifo]], kmin, kmax, delta_f, num_bins = n_chisq_bins)
 			nonwindowed_SNR[ifo, :, :] = np.abs(x[:,a:b]).astype(np.float32)
+		elif matched_filter_optimization:
+			if matched_filter_batch is None:
+				matched_filter_batch = NumpyMatchedFilterBatch(t_templates, N, kmin, kmax, duration)
+			matched_filter_batch.filter_magnitude(strain_np[ifo], psds[ifos[ifo]], a, b, out=nonwindowed_SNR[ifo])
 		else:
 			nonwindowed_SNR[ifo, :, :] = np.abs(numpy_matched_filter(strain_np[ifo], t_templates, psds[ifos[ifo]], N, kmin, kmax, duration, delta_t, f_lower)[:,a:b]).astype(np.float32)
 		
@@ -946,7 +973,8 @@ def calc_batch(i):
 		with mf_time.get_lock():
 			mf_time.value += time.time() - start
 
-
+	# Release the FFT workspace before retaining trigger windows.
+	del matched_filter_batch
 
 	#snrs.append(nonwindowed_SNR)
 	s = time.time()
@@ -962,12 +990,16 @@ def calc_batch(i):
 	else:
 		
 		#print("starting timeslides")
+		background_cache = None
+		if background_timeslide_optimization:
+			background_cache = BackgroundTimeslideCache(nonwindowed_SNR, chop_time=chop_idx)
 		for j in range(num_time_slides):
 			#TODO: since we're passing nonwindowed SNR, we can roll it in-place and save memory.
 			#get_timeslide_new(j, nonwindowed_SNR, template_start_idx)
 			#roll SNR array to perform a time shift
-			nonwindowed_SNR[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048, axis = 1)
-			get_timeslide_new(j, nonwindowed_SNR, template_banks[i])
+			if background_cache is None:
+				nonwindowed_SNR[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048, axis = 1)
+			get_timeslide_new(j, nonwindowed_SNR, template_banks[i], background_cache=background_cache)
 		#with mp.Pool(4) as pool:
 		#	pool.map(get_timeslide_new, range(100))
 	with timeslide_time.get_lock():

@@ -12,6 +12,7 @@ import astropy.units as u
 #import astropy.cosmology as cosmo
 from astropy.cosmology import FlatwCDM
 import numpy as np
+from infernus.threshold_counts import strict_counts
 cosmo = FlatwCDM(H0=67.9, Om0=0.3065, w0=-1)
 from GWSamplegen.noise_utils import combine_seg_list, get_valid_noise_times, get_valid_noise_times_from_segments,gps_to_run
 from GWSamplegen.waveform_utils import t_at_f
@@ -424,30 +425,45 @@ def lognorm_fit_constrained_print(data, upper = 1e-4, lower = 1e-7, method = 'MS
         print("r-squared value: ", r2)
     return res.x
 
-def preds_to_far_constrained(bg,preds, upper = 1e-3, lower = 1e-7, extrapolate = True, verbose = True):
+class ConstrainedFAR:
+    """Reuse a sorted background and its fits when evaluating new predictions."""
 
-	maxval = max(np.max(preds), np.max(bg)) + 10
-	minval = np.min(bg)
+    def __init__(self, background):
+        self._minimum = np.min(background)
+        self._maximum = np.max(background)
+        self._background = np.sort(background)
+        self._background.setflags(write=False)
+        self._fits = {}
 
-	bg = np.sort(bg)
+    def __call__(self, preds, upper=1e-3, lower=1e-7, extrapolate=True, verbose=True):
+        bg = self._background
+        maxval = max(np.max(preds), self._maximum) + 10
+        minval = self._minimum
 
-	fars = 1 - np.searchsorted(bg, preds) / len(bg)
-	fars = np.clip(fars, 1/len(bg), 1)
+        fars = 1 - np.searchsorted(bg, preds) / len(bg)
+        fars = np.clip(fars, 1/len(bg), 1)
 
-	if extrapolate:
+        if extrapolate:
+            space = np.linspace(minval, maxval, 1000)
+            key = (upper, lower)
+            if key not in self._fits:
+                self._fits[key] = lognorm_fit_constrained_print(
+                    bg, upper=upper, lower=lower, verbose=verbose,
+                )
+            mean, std = self._fits[key]
+            cumulative = pdf_to_cdf_arbitrary(norm.pdf(space, mean, std))
+            thresh = bg[-10]
+            fars[preds > thresh] = np.minimum(
+                fars[preds > thresh], np.interp(preds[preds > thresh], space, cumulative),
+            )
+        return fars
 
-		space = np.linspace(minval, maxval, 1000)
-		mean, std = lognorm_fit_constrained_print(bg, upper = upper, lower = lower, verbose = verbose)
-		cumulative = pdf_to_cdf_arbitrary(norm.pdf(space, mean, std))
-		#only extrapolate fars above the max BG value
-		#slight change: we go with fars above the 10th highest BG value
-		thresh = bg[-10]
 
-		fars[preds > thresh] = np.minimum(fars[preds > thresh], np.interp(preds[preds > thresh], space, cumulative))
-
-		#fars = np.minimum(fars, np.interp(preds, space, cumulative))
-		
-	return fars
+def preds_to_far_constrained(bg, preds, upper=1e-3, lower=1e-7, extrapolate=True, verbose=True):
+    """Compute FARs; pass a ConstrainedFAR instance to reuse background work."""
+    if not isinstance(bg, ConstrainedFAR):
+        bg = ConstrainedFAR(bg)
+    return bg(preds, upper=upper, lower=lower, extrapolate=extrapolate, verbose=verbose)
 
 
 
@@ -901,42 +917,51 @@ def point_volume(inj_params, m1, m2, pipeline, detection_threshold = 1/(365.25*2
 def apply_func_to_bg_inj(bg,inj, func, rs_index = 8):
 	return func(bg[:,:,rs_index], axis = 1), func(inj[:,:,rs_index], axis = 1)
 
-def compute_NN_fars(bg_file, inj_file, inj_params, trigger_selection, return_best_only = False, detection_threshold = 1/(365.25*24*3600), upper_thresh = 1e-3, lower_thresh = 1e-7):
-	"""Compute the false alarm rates for injections from an injection set. """
-	
-	#pipeline_fars = inj_params["pipeline_fars"]
-	mask = inj_params["mask"]
-	
+def prepare_nn_background(bg_file, trigger_selection):
+    """Load and reduce every model's background once for repeated FAR queries.
 
-	#check if bg_file is a numpy array or a string path to a numpy file
-	if isinstance(bg_file, str):
-		bg = np.load(bg_file)
-		bg = bg.astype(np.float32)
-		bg = bg.reshape(-1, bg.shape[2], bg.shape[3])
+    The returned mapping owns its sorted score arrays. Pass it as ``bg_file``
+    to compute_NN_fars with the same trigger_selection to reuse it across
+    injection files or plot updates.
+    """
+    if isinstance(bg_file, str):
+        bg = np.load(bg_file).astype(np.float32)
+        bg = bg.reshape(-1, bg.shape[2], bg.shape[3])
+    else:
+        bg = bg_file
+        if len(bg.shape) == 4:
+            bg = bg.reshape(-1, bg.shape[2], bg.shape[3])
+    bg = bg[np.all(bg[:, :, 2] > 0, axis=1)]
+    background = {}
+    for column in range(8, bg.shape[2]):
+        values = trigger_selection(bg[:, :, column], axis=1)
+        background[column] = ConstrainedFAR(values[np.isfinite(values)])
+    return background
+
+
+def compute_NN_fars(bg_file, inj_file, inj_params, trigger_selection, return_best_only = False, detection_threshold = 1/(365.25*24*3600), upper_thresh = 1e-3, lower_thresh = 1e-7):
+	"""Compute injection FARs using a background array, path, or prepared mapping.
+
+	A mapping from prepare_nn_background reuses reductions, sorts and fits.
+	Injection arrays may also be supplied to avoid loading the same file again.
+	"""
+	mask = inj_params["mask"]
+	if isinstance(bg_file, dict):
+		background = bg_file
 	else:
-		#check if it's already in the right shape
-		bg = bg_file
-		if len(bg.shape) == 4:
-			print("reshaping BG file to get rid of timeslides axis")
-			bg = bg.reshape(-1, bg.shape[2], bg.shape[3])
-	bg = bg[np.all(bg[:,:,2] > 0, axis = 1)]
+		background = prepare_nn_background(bg_file, trigger_selection)
 
 	if isinstance(inj_file, str):
-		zerolags = np.load(inj_file)[0] #the 0 is to get rid of the timeslides axis
-		for i in range(zerolags.shape[0]):
-			for j in range(zerolags.shape[1]):
-				if zerolags[i,j,2] < 0:
-					zerolags[i,j,8:] = -100 #catch-all to ensure that triggers with no SNR are rejected
+		zerolags = np.load(inj_file)[0]
+	else:
+		zerolags = np.array(inj_file, copy=True)
+		if zerolags.ndim == 4:
+			zerolags = zerolags[0]
+	zerolags[:, :, 8:][zerolags[:, :, 2] < 0] = -100
 
-	bg_sort = []
 	pipeline_fars = {}
-	for i in range(8,bg.shape[2]):
-		bg_func, inj_func = apply_func_to_bg_inj(bg, zerolags, trigger_selection, rs_index = i)
-		#get rid of nans from the background
-		bg_func = bg_func[np.where(np.isfinite(bg_func))]
-		#also clip the background at 50
-		#bg_func = bg_func[(bg_func < 25)]
-		#bg_func = np.nan_to_num(bg_func, nan = -10)
+	for i, bg_func in background.items():
+		inj_func = trigger_selection(zerolags[:, :, i], axis=1)
 
 		nn_preds = np.full(mask.sum(), -1000.0)
 		nn_preds[inj_params["inj_ids"]] = inj_func[inj_params["zerolags"]]
@@ -963,13 +988,13 @@ def compute_NN_fars(bg_file, inj_file, inj_params, trigger_selection, return_bes
 		if return_best_only is not True:
 			best = return_best_only
 		else:
-			best = 8
-			for j in range(8, bg.shape[2]):
+			best = next(iter(background))
+			for j in background:
 				if np.sum(pipeline_fars['NN'+str(j)] < detection_threshold) > np.sum(pipeline_fars['NN'+str(best)] < detection_threshold):
 					best = j
 			print("Best NN is NN{}".format(best))
 		#remove all NNs except the best one
-		for j in range(8, bg.shape[2]):
+		for j in background:
 			if j != best:
 				del pipeline_fars['NN'+str(j)]
 	return pipeline_fars
@@ -1167,22 +1192,25 @@ def V_summary_plot(inj_params):
 from pycbc.detector import Detector
 from GWSamplegen.waveform_utils import chirp_mass
 import os
-def plot_missed_vs_found(params, FARs,save_fp, OPA_threshold = 1/(3600*24*365.25), suffix = ""):
+def prepare_missed_vs_found(params):
+    """Prepare detector distances and chirp masses for reuse across FAR plots."""
+    detector = Detector("L1")
+    return {
+        "chirp_masses": chirp_mass(params['m1'], params['m2']),
+        "deff_l": detector.effective_distance(
+            params['distance'], params['right_ascension'], params['declination'],
+            params['polarization'], params['gps_times'], params['inclination'],
+        ),
+    }
 
-	#cosmo = Cosmology()
-	d = Detector("H1")
-	d2 = Detector("L1")
 
-	distance = params['distance']
-	right_ascension = params['right_ascension']
-	declination = params['declination']
-	polarization = params['polarization']
-	gps = params['gps_times']
-	inclination = params['inclination']
-	chirp_masses = chirp_mass(params['m1'], params['m2'])
+def plot_missed_vs_found(params, FARs,save_fp, OPA_threshold = 1/(3600*24*365.25), suffix = "", *, plot_inputs=None):
+	"""Plot recovery, optionally reusing inputs from prepare_missed_vs_found."""
+	if plot_inputs is None:
+		plot_inputs = prepare_missed_vs_found(params)
+	chirp_masses = plot_inputs['chirp_masses']
+	deff_l = plot_inputs['deff_l']
 
-	deff_h = d.effective_distance(distance, right_ascension, declination, polarization, gps, inclination)
-	deff_l = d2.effective_distance(distance, right_ascension, declination, polarization, gps, inclination)
 	fig, axes = plt.subplots(1,2, figsize=(3.6,2.8), sharey=True, width_ratios=[3, 1], dpi = 300)
 	fig.tight_layout()
 
@@ -1196,16 +1224,10 @@ def plot_missed_vs_found(params, FARs,save_fp, OPA_threshold = 1/(3600*24*365.25
 	print()
 	bins = np.geomspace(1, np.max(deff_l)*1.1, 200)
 
-	rec_fracs = []
-	with np.errstate(divide='ignore', invalid='ignore'):
-		for bin in bins:
-			n_found = np.sum((deff_l < bin) & found)
-			n_missed = np.sum((deff_l < bin) & missed)
-
-			if np.isnan(np.divide(n_found, (n_missed+n_found))):
-				rec_fracs.append(1)
-			else:
-				rec_fracs.append(n_found/(n_missed+n_found))
+	n_found = strict_counts(deff_l[found], bins, 'lt')
+	n_missed = strict_counts(deff_l[missed], bins, 'lt')
+	rec_fracs = np.ones(bins.shape)
+	np.divide(n_found, n_missed + n_found, out=rec_fracs, where=(n_missed + n_found) != 0)
 
 	axes[1].plot(rec_fracs, bins)
 	axes[1].set_xlabel("Found \n fraction")

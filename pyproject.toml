@@ -26,6 +26,8 @@ requires-python = ">= 3.10"
 readme = "README.md"
 license = {text = "MIT License"}
 
+[project.optional-dependencies]
+performance = ["numba >= 0.60"]
 
 
 [tool.setuptools]

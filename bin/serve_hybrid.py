@@ -9,6 +9,7 @@ import argparse
 import json
 import onnxruntime as ort
 import sys
+from infernus.inference_batches import InferenceBatches, store_prediction_column
 
 start = time.time()
 
@@ -391,6 +392,12 @@ future_list = []
 inference_count = 0
 current_cpus = cpus #int(cpus//2)
 executor = None
+inference_batches = InferenceBatches(
+	SNR, inference_rate=inference_rate, stride=stride,
+	light_travel_time=light_travel_time, num_time_slides=num_time_slides,
+	num_triggers=num_triggers, seconds=timeslides.shape[1],
+)
+
 if injfile == 'real':
 	unaveraged_response_array = np.zeros((timeslides.shape[0], timeslides.shape[1], timeslides.shape[2], inference_rate))
 
@@ -429,42 +436,18 @@ for n in range(num_models):
 	send_buffer_l = np.zeros((batch_size, 2048, 1)).astype(np.float32)
 	send_buffer_dt = np.zeros((batch_size, 1)).astype(np.float32)
 
-	ts_start = 0
-	second_start = 0
-	window_start = 0
-	trigger_start = 0
-
-	ts_counter = 0
-	second_counter = 0
-	window_counter = 0
-	trigger_counter = 0
-	#print("my priority is ", job_id)
-	#we send by window, then by timeslide, then by second
+	request_position = 0
 	done = False
 	count = 0 #note count only increments when we use the GPU
 	start = time.time()
 
 	response_list = []
 	while not done:
-		request_id = str(window_counter) + "_" + str(trigger_counter) + "_" + str(ts_counter) + "_" + str(second_counter) #+ "_" + str(cutoff)
-		for i in range(len(send_buffer_h)):
-			temp_h = SNR[0,ts_counter,second_counter,trigger_counter,(window_counter+1) * stride: (window_counter+1) * stride+2048].copy()
-			temp_l = SNR[1,ts_counter,second_counter,trigger_counter,(window_counter+1) * stride: (window_counter+1) * stride+2048].copy()
-			temp_dt = (np.argmax(temp_h) - np.argmax(temp_l))/light_travel_time
-			send_buffer_h[i] = temp_h.reshape(2048,1)
-			send_buffer_l[i] = temp_l.reshape(2048,1)
-			send_buffer_dt[i] = temp_dt
-			window_counter = (window_counter + 1)%inference_rate
-			if window_counter == 0:
-				trigger_counter = (trigger_counter + 1)%num_triggers
-				if trigger_counter == 0:
-					ts_counter = (ts_counter + 1)%num_time_slides
-					if ts_counter == 0:
-						second_counter = (second_counter + 1)%timeslides.shape[1]
-						if second_counter == 0:
-							#need add a flag to indicate that we're done
-							done = True
-							break
+		request_id = inference_batches.request_id(request_position)
+		request_position = inference_batches.fill(
+			request_position, send_buffer_h, send_buffer_l, send_buffer_dt,
+		)
+		done = request_position == inference_batches.total
 
 		if gpu_ready:
 
@@ -498,7 +481,7 @@ for n in range(num_models):
 		else:
 			future_list.append(executor.submit(run_session, (send_buffer_h.copy(), send_buffer_l.copy(), send_buffer_dt.copy(), request_id)))
 			inference_count += 1
-			if second_counter%10 == 0 and ts_counter == 0 and trigger_counter == 0 and window_counter == 0:
+			if request_position % (10 * num_time_slides * num_triggers * inference_rate) == 0 or done:
 				print("CPU inference!")
 				print(request_id)
 			
@@ -530,7 +513,7 @@ for n in range(num_models):
 				executor.shutdown(wait=False, cancel_futures=True)
 				executor = concurrent.futures.ProcessPoolExecutor(max_workers=current_cpus)
 				#also reset the counters
-				ts_counter, second_counter, window_counter, trigger_counter = 0, 0, 0, 0
+				request_position = 0
 				sess = ort.InferenceSession(model, sess_opt, providers=['CPUExecutionProvider'])
 				print("finished resetting the model")
 				continue
@@ -592,24 +575,7 @@ for n in range(num_models):
 	future_list = []
 
 	for response in response_list:
-		response_data = response[0].ravel()
-		response_header = response[1].split("_")
-		window_start = int(response_header[0])
-		trigger_start = int(response_header[1])
-		ts_start = int(response_header[2])
-		second_start = int(response_header[3])
-		for r in range(len(response_data)):
-			response_array[ts_start, second_start, trigger_start, window_start] = response_data[r]
-			window_start = (window_start + 1)%inference_rate
-			if window_start == 0:
-				trigger_start = (trigger_start + 1)%num_triggers
-				if trigger_start == 0:
-					ts_start = (ts_start + 1)%num_time_slides
-					if ts_start == 0:
-						second_start = (second_start + 1)%timeslides.shape[1]
-						if second_start == 0:
-							break
-
+		inference_batches.scatter(response_array, response[0], response[1])
 
 	#success = triton_client.get_inference_statistics('model_full').model_stats[0].inference_stats.success.count
 	#queue = triton_client.get_inference_statistics('model_full').model_stats[0].inference_stats.queue.count
@@ -637,12 +603,7 @@ for n in range(num_models):
 	#on second thoughts, we should DEFINITELY replace predictions with -1000 for invalid timeslides
 	#also time the new loop to check it's not too slow
 
-	timeslides[:,:,:,response_idx] = -1000
-	for i in range(num_time_slides):
-		for j in range(timeslides.shape[1]):
-			for k in range(timeslides.shape[2]):
-				if timeslides[i,j,k,2] > 1:
-					timeslides[i,j,k,response_idx] = response_array[i,j,k]
+	store_prediction_column(timeslides, response_array, response_idx)
 
 	response_idx += 1
 	print("response index is now ", response_idx)

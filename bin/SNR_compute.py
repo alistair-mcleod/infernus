@@ -9,6 +9,10 @@ import h5py
 from GWSamplegen.noise_utils import load_psd, get_valid_noise_times, load_gps_blacklist, get_valid_noise_times_from_segments, get_data_from_OzStar
 from GWSamplegen.waveform_utils import load_pycbc_templates, chirp_mass, select_approximant, t_at_f, maximum_f_lower
 from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq, numpy_matched_filter
+try:
+	from GWSamplegen.snr_utils_np import NumpyMatchedFilterBatch
+except ImportError:
+	NumpyMatchedFilterBatch = None
 from GWSamplegen.chisq_utils_np import reduced_chisquared_precomputed_SNR
 from pycbc.waveform import get_fd_waveform, get_td_waveform
 from pycbc.psd import interpolate, inverse_spectrum_truncation
@@ -291,6 +295,12 @@ if isinstance(noise_dir, list) or injfile == "real":
 else:
 	new_noise = False
 
+
+# Chi-squared reweighting needs the full complex SNR and repeated strain rows.
+matched_filter_optimisation = (
+	bool(args.get("matched_filter_optimisation", True))
+	and NumpyMatchedFilterBatch is not None and not chisq
+)
 
 print(noise_dir)
 delta_t = 1/sample_rate
@@ -856,7 +866,7 @@ for ifo in range(len(ifos)):
 	strain[ifo] = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
 	strain[ifo] = highpass(strain[ifo],f_lower).to_frequencyseries(delta_f=delta_f).data
 	strain[ifo] = np.array([strain[ifo]])[:,kmin:kmax]
-	strain_np[ifo] = np.repeat(strain[ifo], n_templates, axis=0)
+	strain_np[ifo] = strain[ifo] if matched_filter_optimisation else np.repeat(strain[ifo], n_templates, axis=0)
 	with strain_time.get_lock():
 		strain_time.value += time.time() - start
 
@@ -886,7 +896,7 @@ def calc_batch(i):
 			#strain = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
 			#strain = highpass(strain,f_lower).to_frequencyseries(delta_f=delta_f).data
 			#strain = np.array([strain])[:,kmin:kmax]
-			strain_np[ifo] = np.repeat(strain[ifo], n_templates, axis=0)
+			strain_np[ifo] = strain[ifo] if matched_filter_optimisation else np.repeat(strain[ifo], n_templates, axis=0)
 			with strain_time.get_lock():
 				strain_time.value += time.time() - start
 			#strain_time += time.time() - start
@@ -923,6 +933,7 @@ def calc_batch(i):
 	#template_conj = np.conjugate(t_templates)
 
 	nonwindowed_SNR = np.empty((len(ifos), n_templates, slice_duration*sample_rate), dtype=np.float32)
+	matched_filter_batch = None
 
 	for ifo in range(len(ifos)):
 	
@@ -934,6 +945,10 @@ def calc_batch(i):
 			x = numpy_matched_filter(strain_np[ifo], t_templates, psds[ifos[ifo]], N, kmin, kmax, duration, delta_t, f_lower)
 			x *= reduced_chisquared_precomputed_SNR(x, t_templates, strain_np[ifo], psds[ifos[ifo]], kmin, kmax, delta_f, num_bins = n_chisq_bins)
 			nonwindowed_SNR[ifo, :, :] = np.abs(x[:,a:b]).astype(np.float32)
+		elif matched_filter_optimisation:
+			if matched_filter_batch is None:
+				matched_filter_batch = NumpyMatchedFilterBatch(t_templates, N, kmin, kmax, duration)
+			matched_filter_batch.filter_magnitude(strain_np[ifo], psds[ifos[ifo]], a, b, out=nonwindowed_SNR[ifo])
 		else:
 			nonwindowed_SNR[ifo, :, :] = np.abs(numpy_matched_filter(strain_np[ifo], t_templates, psds[ifos[ifo]], N, kmin, kmax, duration, delta_t, f_lower)[:,a:b]).astype(np.float32)
 		
@@ -947,6 +962,9 @@ def calc_batch(i):
 			mf_time.value += time.time() - start
 
 
+
+	# Release the FFT workspace before retaining trigger windows.
+	del matched_filter_batch
 
 	#snrs.append(nonwindowed_SNR)
 	s = time.time()

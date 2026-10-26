@@ -97,14 +97,8 @@ if [ $total_jobs -gt 2048 ]; then
 	array=2048
 fi
 
-
-#array=12
-#total_jobs=6000
-
-#0-$((array - 1))
-
 #split is the fraction of tasks that goes TO ozstar rather than NT
-split=$(( $array / 2))
+split=$(( $array / 4))
 #split=$((7 *$array / 8))
 
 

@@ -7,7 +7,7 @@ import gc
 import json
 import h5py
 from GWSamplegen.noise_utils import load_psd, get_valid_noise_times, load_gps_blacklist, get_valid_noise_times_from_segments, get_data_from_OzStar
-from GWSamplegen.waveform_utils import load_pycbc_templates, chirp_mass, select_approximant, t_at_f, maximum_f_lower
+from GWSamplegen.waveform_utils import load_pycbc_templates, chirp_mass, select_approximant, t_at_f, f_at_t, maximum_f_lower
 from GWSamplegen.snr_utils_np import np_get_cutoff_indices, mf_in_place, np_sigmasq, numpy_matched_filter
 from GWSamplegen.chisq_utils_np import reduced_chisquared_precomputed_SNR
 from pycbc.waveform import get_fd_waveform, get_td_waveform
@@ -320,6 +320,10 @@ if injfile != "real" and not new_noise:
 max_waveform_length = 100
 print("Forcing max_waveform_length to be 100 seconds")
 
+#get the length of the waveform for the first template, 
+true_max_waveform_length = t_at_f(templates[0,1], templates[0,2], f_lower)
+if true_max_waveform_length > max_waveform_length:
+	print("WARNING: the first template has a waveform length of", true_max_waveform_length, "seconds. Some templates will have their f_lower adjusted to avoid ringing.")
 
 template_start = 0
 #templates_per_batch = 30 #TODO: check different sizes.
@@ -722,7 +726,7 @@ print("starting from template", template_start, flush=True)
 n_batches = int(np.ceil(templates_per_job/templates_per_batch))
 print("n_batches", n_batches, flush=True)
 
-t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
+t_templates = np.zeros((n_templates, kmax-kmin), dtype=np.complex128)
 #snrs = []
 #only need one noise segment
 
@@ -880,7 +884,7 @@ def calc_batch(i):
 		#n_templates =  (templates_per_job + template_start) - template_start_idx
 		print("loading templates in range", template_banks[i][0], template_banks[i][-1])
 		n_templates = len(template_banks[i])
-		t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
+		t_templates = np.zeros((n_templates, kmax-kmin), dtype=np.complex128)
 		print("last templates for this job, only {}".format(n_templates))
 		for ifo in range(len(ifos)):
 			#strain = TimeSeries(noise[ifo], delta_t=delta_t, copy=False)
@@ -894,7 +898,7 @@ def calc_batch(i):
 		#print("loading templates in range",template_start_idx, (i+1)*templates_per_batch + template_start)
 		print("loading templates in range", template_banks[i][0], template_banks[i][-1])
 		n_templates = templates_per_batch
-		t_templates = np.empty((n_templates, kmax-kmin), dtype=np.complex128)
+		t_templates = np.zeros((n_templates, kmax-kmin), dtype=np.complex128)
 
 	#print(n_templates)
 
@@ -910,11 +914,15 @@ def calc_batch(i):
 
 		temp_fd_approximant = select_approximant(templates[template_banks[i][j],1], templates[template_banks[i][j],2], 
 										   fd_approximant, domain='frequency')
+		temp_f_lower = max(f_lower, f_at_t(templates[template_banks[i][j],1], templates[template_banks[i][j],2], start_cutoff-10))
+		#if temp_f_lower != f_lower:
+		#	print("WARNING: f_lower for template {} is {} Hz, which is higher than the analysis f_lower of {} Hz. To avoid this issue,\
+		# either increase the analysis f_lower or increase the start_cutoff.".format(template_banks[i][j], temp_f_lower, f_lower), flush = True)
 		t_templates[j] = get_fd_waveform(mass1 = templates[template_banks[i][j],1], 
 								mass2 = templates[template_banks[i][j],2],
 								spin1z = templates[template_banks[i][j],3], 
 								spin2z = templates[template_banks[i][j],4],
-								approximant = temp_fd_approximant, f_lower = f_lower, 
+								approximant = temp_fd_approximant, f_lower = temp_f_lower, 
 								delta_f = delta_f, f_final = f_final)[0].data[kmin:kmax]
 	#TODO: uncomment
 	with template_time.get_lock():

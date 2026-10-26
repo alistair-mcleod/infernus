@@ -5,26 +5,26 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
-from infernus.postprocessing import preds_to_far_constrained, lognorm_fit_constrained_print, pdf_to_cdf_arbitrary, get_inj_data, get_dsens
+from infernus.postprocessing import preds_to_far_constrained, lognorm_fit_constrained_print, pdf_to_cdf_arbitrary, get_inj_data, get_dsens, V_summary_plot
 from infernus.real_utils import get_GWTC_events
 from pycbc.sensitivity import volume_to_distance_with_errors
 from astropy.cosmology import FlatwCDM
 cosmo = FlatwCDM(H0=67.9, Om0=0.3065, w0=-1)
-
+import copy
 
 def apply_func_to_bg_inj(bg,inj, func, rs_index = 8):
 	
 	return func(bg[:,:,rs_index], axis = 1), func(inj[:,:,rs_index], axis = 1)
 
 
-def mdc_results(m, inj_file, bg, n_models,mdc_files, noise_dir, max_bg_remove = 5):
+def mdc_results(m, inj_file, bg, n_models,mdc_files, noise_dir, trigger_selection = np.median, max_bg_remove = 5):
 	#we need to return the results for ALL models for this MDC file
 	mdc_inj_results = {}
 	print("Number of models: ", n_models)
 
 	print("Processing MDC file: ", mdc_files[m])
 	print("Injfiles are in: ", inj_file[m])
-	N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_files[m], pipelines = ["pycbc_hyperbank", "mbta", "gstlal"])
+	N_draw, mask, inj_params = get_inj_data(4, noise_dir, mdc_files[m], pipelines = ["pycbc", "mbta", "gstlal", "cwb-bbh"])
 
 	rs_index = 8
 	zerolags = np.load(inj_file[m])[0] #the 0 is to get rid of the timeslides axis
@@ -45,20 +45,26 @@ def mdc_results(m, inj_file, bg, n_models,mdc_files, noise_dir, max_bg_remove = 
 	p_draw = inj_params["p_draw"]
 	N_draw = inj_params["N_draw"]
 
-	pipelines = ['pycbc_hyperbank', 'mbta', 'gstlal']
+	pipelines = ['pycbc', 'mbta', 'gstlal']
 
-
+	print("IN MDC results, injection length is: ", len(m1))
 	#VT, sigma_VT = get_dsens(z, p_draw, N_draw, pipelines, pipeline_fars)
 
 	upper_thresh = 1e-3
 	lower_thresh = 1e-7
-	OPA_threshold = 1/(3600*24*30*2)
+	#OPA_threshold = 1/(3600*24*30*2)
+	if inj_params['file_format'] == "O3":
+		OPA_threshold = 1/(3600*24*30*2) #1 per 2 months
+		print("Using O3 OPA threshold of 1 per 2 months")
+	elif inj_params['file_format'] == "O4":
+		print("Using O4 OPA threshold of 1 per year")
+		OPA_threshold = 1/(3600*24*365.25) #1 per year
 	#sys.path.append("/fred/oz016/alistair/infernus/infernus")
 	#from infernus.postprocessing import preds_to_far_constrained, lognorm_fit_constrained_print,pdf_to_cdf_arbitrary
 	mdc_inj_results["inj_params"] = inj_params
 	
 	for i in range(8, 8+n_models):
-		_, inj_func = apply_func_to_bg_inj(zerolags[:2], zerolags, np.median, rs_index = i)
+		_, inj_func = apply_func_to_bg_inj(zerolags[:2], zerolags, trigger_selection, rs_index = i)
 		#
 		nn_preds = np.full(mask.sum(), -1000.0)
 		nn_preds[inj_params["inj_ids"]] = inj_func[inj_params["zerolags"]]
@@ -115,20 +121,36 @@ def combined_model_results(fps):
 		model_args = json.load(open(submit_args['model_args']))
 		n_models = model_args["final_model_candidates"]
 		noise_dir = inj_args["noise_dir"]
+		#noise_dir = [[1371219220,1373638420]]
+		#print("CHANGE NOISE DIR BACK LATER")
+
 		mdc_file = inj_args["injfile"]
 		if isinstance(mdc_file, list):
 			print("List of injection files detected,")
 		else:
 			mdc_file = [mdc_file]
 			#mdc_file = mdc_file[int(inj_args['bin'][-1])]
-		model_val_dir = os.path.join(inj_args['jobdir'], "results", inj_args['bin'])
-		os.makedirs(model_val_dir, exist_ok = True)
-		print("Model val dir: ", model_val_dir)
+		# model_val_dir = os.path.join(inj_args['jobdir'], "results", inj_args['bin'])
+		# os.makedirs(model_val_dir, exist_ok = True)
+		# print("Model val dir: ", model_val_dir)
 		bg_file = os.path.join(bg_args['save_dir'], "timeslides.npy")
+		#inj_file = [os.path.join(inj_args['save_dir'], "inj_{}".format(i), "timeslides.npy") for i in range(len(mdc_file))]
 		inj_file = [os.path.join(inj_args['save_dir'], "inj_{}".format(i), "timeslides.npy") for i in range(len(mdc_file))]
-		#print("TODO: generalise to multiple injection files!")
+		#inj_file = [i.replace("injections", "injections_short") for i in inj_file]
+		print(inj_file)
+		#print("WARNING: TEMPORARILY USING SHORT INJECTION FILES FOR TESTING, CHANGE THIS BACK TO FULL INJECTION FILES WHEN DONE TESTING")
 		real_dir_root = os.path.join(inj_args['jobdir'], "real_events", inj_args['bin'])
 		real_dirs = sorted(os.listdir(real_dir_root))
+		if 'trigger_selection' in inj_args:
+			trigger_selection = inj_args['trigger_selection']
+			try:
+				trigger_selection = eval(trigger_selection)
+				print("Using trigger selection function: ", trigger_selection)
+			except:
+				print("Failed to evaluate trigger selection, defaulting to median")
+				trigger_selection = np.median
+		else:
+			trigger_selection = np.median
 		
 
 		print("Loading data from ", bg_file, inj_file)
@@ -152,7 +174,7 @@ def combined_model_results(fps):
 		#now we get the backgrounds for each model
 		zerolags = np.load(inj_file[0])[0] #the 0 is to get rid of the timeslides axis
 		for i in range(8, bg.shape[2]):
-			bg_func, _ = apply_func_to_bg_inj(bg, zerolags, np.median, rs_index = i)
+			bg_func, _ = apply_func_to_bg_inj(bg, zerolags, trigger_selection, rs_index = i)
 			bg_func = bg_func[np.where(np.isfinite(bg_func))]
 			bg_func = np.sort(bg_func)
 			bg_sort.append(bg_func)
@@ -161,12 +183,19 @@ def combined_model_results(fps):
 		for m in range(len(mdc_file)):
 			#print("Processing bin ", bin)
 			#print("Processing MDC file: ", mdc_file[m])
-			ret = mdc_results(m, inj_file, bg_sort, n_models, mdc_file, noise_dir)
+			ret = mdc_results(m, inj_file, bg_sort, n_models, mdc_file, noise_dir, trigger_selection=trigger_selection)
 			bin_stats[m] = ret
 		bin_stats["bg_sort"] = bg_sort
 		all_stats[bin] = bin_stats
 	
-	OPA_threshold = 1/(3600*24*30*2)
+	#OPA_threshold = 1/(3600*24*30*2)
+	#determine OPA threshold dynamically based on the file format of the first bin's first MDC file
+	if all_stats[0][0]['inj_params']['file_format'] == "O4":
+		print("O4 file format, using OPA threshold of 1/yr")
+		OPA_threshold = 1/(3600*24*365.25)
+	else:
+		print("Assuming O3 file format, using OPA threshold of 1/2 months")
+		OPA_threshold = 1/(3600*24*30*2)
 
 	#for now weights are 1/n_bins
 	weights = [1/n_bins for _ in range(n_bins)]
@@ -194,8 +223,15 @@ def combined_model_results(fps):
 			print("Model counts for MDC file ", mdc_file[m])
 			print("NN model detections below OPA threshold: ", this_found)
 			model_found += this_found
+			if m == b:
+				#if the MDC index matches the bin index, we use this to check for the best model.
+				print("New plan for finding best model: check specifically using the MDC file with the same index as the bin.")
+				print("Note that this assumes that there are an equal number of MDC files and bins, which is NOT always the case.")
+				print("The reason for this change is to prevent the BBH sensitivity of a model from overwhelming the BNS/NSBH sensitivity.")
+				print("This came about because there are many more BBH injections in O4 inj runs.")
+				best_model_idx = np.argmax(this_found) + 8
 
-		best_model_idx = np.argmax(model_found) + 8
+		#best_model_idx = np.argmax(model_found) + 8
 		print()
 		print("Best model is NN{} with {} total detections below OPA threshold".format(best_model_idx, model_found[best_model_idx -8]))
 		print()
@@ -204,12 +240,13 @@ def combined_model_results(fps):
 	#now for each MDC file, we can get the detection lists for the best model
 	#essentially we flatten the bin axis.
 	for m in range(len(mdc_file)):
-		far_combined = all_stats[0][m]['inj_params']['pipeline_fars']["NN"+str(all_stats["combined"]["best_model"][0])]/weights[0]
+		far_combined = np.ones_like(all_stats[0][m]['inj_params']['pipeline_fars']["NN"+str(all_stats["combined"]["best_model"][0])])
+		#far_combined = copy.deepcopy(all_stats[0][m]['inj_params']['pipeline_fars']["NN"+str(all_stats["combined"]["best_model"][0])])/weights[0]
 		print("FAR contribution from bin 0: ", far_combined)
 		#all_stats["combined"][m]['pipeline_fars'] = all_stats[0][m]['inj_params']['pipeline_fars'][all_stats["combined"]["best_model"][0]]
-		for b in range(1,3):
+		for b in range(3):
 			bin_idx = b
-			far_bin = all_stats[bin_idx][m]['inj_params']['pipeline_fars']["NN"+str(all_stats["combined"]["best_model"][b])]/weights[b]
+			far_bin = copy.deepcopy(all_stats[bin_idx][m]['inj_params']['pipeline_fars']["NN"+str(all_stats["combined"]["best_model"][b])])/weights[b]
 			print("FAR contribution from bin {}: ".format(b), far_bin)
 			far_combined = np.minimum(far_combined, far_bin)
 		
@@ -220,7 +257,7 @@ def combined_model_results(fps):
 		#		del all_stats["combined"][m]['pipeline_fars']['NN'+str(i)]
 		#add in the combined model
 		all_stats["combined"][m]['pipeline_fars']['NN_combined'] = far_combined
-		all_stats["combined"][m]['inj_params'] = all_stats[0][m]['inj_params']
+		all_stats["combined"][m]['inj_params'] = all_stats[0][m]['inj_params'].copy()
 		all_stats["combined"][m]['found'] = {}
 		for p in all_stats["combined"][m]['inj_params']['pipeline_fars'].keys():
 			all_stats["combined"][m]['found'][p] = (all_stats["combined"][m]['inj_params']['pipeline_fars'][p] < OPA_threshold)
@@ -239,30 +276,30 @@ def mdc_results_summary(stats, bin, n_models):
 		print("NN{}: ".format(i), found['NN'+str(i)].sum())
 
 	print("\npycbc, mbta, gstlal:")
-	print(found['pycbc_hyperbank'].sum(), found['mbta'].sum(), found['gstlal'].sum())
+	print(found['pycbc'].sum(), found['mbta'].sum(), found['gstlal'].sum())
 	print("")
-	print("PyCBC unique events: ", (found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("MBTA unique events: ", (~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-	print("GSTLAL unique events: ", (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+	print("PyCBC unique events: ", (found['pycbc'] & ~found['mbta'] & ~found['gstlal']).sum())
+	print("MBTA unique events: ", (~found['pycbc'] & found['mbta'] & ~found['gstlal']).sum())
+	print("GSTLAL unique events: ", (~found['pycbc'] & ~found['mbta'] & found['gstlal']).sum())
 	print("")
 
 	for i in range(8,n_models +8):
-		print("unique events in NN{}: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] \
+		print("unique events in NN{}: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] \
 												& ~found['mbta'] & ~found['gstlal']).sum())
 
 
 	print("")
 	for i in range(8,n_models +8):
-		print("NN{} duo detection with PyCBC: ".format(i), (found['NN'+str(i)] & found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-		print("NN{} duo detection with MBTA: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-		print("NN{} duo detection with GSTLAL: ".format(i), (found['NN'+str(i)] & ~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+		print("NN{} duo detection with PyCBC: ".format(i), (found['NN'+str(i)] & found['pycbc'] & ~found['mbta'] & ~found['gstlal']).sum())
+		print("NN{} duo detection with MBTA: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] & found['mbta'] & ~found['gstlal']).sum())
+		print("NN{} duo detection with GSTLAL: ".format(i), (found['NN'+str(i)] & ~found['pycbc'] & ~found['mbta'] & found['gstlal']).sum())
 
 	print("")
 
 	for i in range(8,n_models +8):
-		print("unique PyCBC events AFTER adding NN{}: ".format(i), (found['pycbc_hyperbank'] & ~found['NN'+str(i)] & ~found['mbta'] & ~found['gstlal']).sum())
-		print("unique MBTA events AFTER adding NN{}: ".format(i), (~found['pycbc_hyperbank'] & found['mbta'] & ~found['NN'+str(i)] & ~found['gstlal']).sum())
-		print("unique GSTLAL events AFTER adding NN{}: ".format(i), (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal'] & ~found['NN'+str(i)]).sum())
+		print("unique PyCBC events AFTER adding NN{}: ".format(i), (found['pycbc'] & ~found['NN'+str(i)] & ~found['mbta'] & ~found['gstlal']).sum())
+		print("unique MBTA events AFTER adding NN{}: ".format(i), (~found['pycbc'] & found['mbta'] & ~found['NN'+str(i)] & ~found['gstlal']).sum())
+		print("unique GSTLAL events AFTER adding NN{}: ".format(i), (~found['pycbc'] & ~found['mbta'] & found['gstlal'] & ~found['NN'+str(i)]).sum())
 
 	#criterion for best pipeline per bin is the most detections below the OPA threshold
 
@@ -345,7 +382,7 @@ def plot_sensitivities(inj_params, pipeline_fars, nn_name, mdc, save_fp, mdc_idx
 			's1_s2_prior': np.log(inj_params['s1_prior']) + np.log(inj_params['s2_prior'])
 		}
 
-		pipelines = ['pycbc_hyperbank', 'mbta', 'gstlal']
+		pipelines = ['pycbc', 'mbta', 'gstlal']
 		pipelines.append(nn_name)
 
 		#print("Pipelines for this plot: ", pipelines)
@@ -386,31 +423,92 @@ def combined_pipeline_mdc_summary(all_stats, mdc_idx):
 	found = all_stats['combined'][mdc_idx]['found']
 
 	print("Combined pipeline:", found['NN_combined'].sum())
-	print("\npycbc, mbta, gstlal:")
-	print(found['pycbc_hyperbank'].sum(), found['mbta'].sum(), found['gstlal'].sum())
+	print("\npycbc, mbta, gstlal, cwb:")
+	print(found['pycbc'].sum(), found['mbta'].sum(), found['gstlal'].sum(), found['cwb-bbh'].sum())
 
 	print("")
-	print("PyCBC unique events: ", (found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("MBTA unique events: ", (~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-	print("GSTLAL unique events: ", (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+	print("PyCBC unique events: ", (found['pycbc'] & ~found['mbta'] & ~found['gstlal']& ~found['cwb-bbh']).sum())
+	print("MBTA unique events: ", (~found['pycbc'] & found['mbta'] & ~found['gstlal']& ~found['cwb-bbh']).sum())
+	print("GSTLAL unique events: ", (~found['pycbc'] & ~found['mbta'] & found['gstlal']& ~found['cwb-bbh']).sum())
+	print("CWB unique events: ", (~found['pycbc'] & ~found['mbta'] & ~found['gstlal'] & found['cwb-bbh']).sum())
 	print("")
 
-	print("Unique combined events: ", (found['NN_combined'] & ~found['pycbc_hyperbank'] \
-												& ~found['mbta'] & ~found['gstlal']).sum())
+	print("Unique combined events: ", (found['NN_combined'] & ~found['pycbc'] \
+												& ~found['mbta'] & ~found['gstlal'] & ~found['cwb-bbh']).sum())
 
 	print("")
-	print("NN_combined duo detection with PyCBC: ", (found['NN_combined'] & found['pycbc_hyperbank'] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("NN_combined duo detection with MBTA: ", (found['NN_combined'] & ~found['pycbc_hyperbank'] & found['mbta'] & ~found['gstlal']).sum())
-	print("NN_combined duo detection with GSTLAL: ", (found['NN_combined'] & ~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal']).sum())
+	print("NN_combined duo detection with PyCBC: ", (found['NN_combined'] & found['pycbc'] & ~found['mbta'] & ~found['gstlal'] & ~found['cwb-bbh']).sum())
+	print("NN_combined duo detection with MBTA: ", (found['NN_combined'] & ~found['pycbc'] & found['mbta'] & ~found['gstlal']& ~found['cwb-bbh']).sum())
+	print("NN_combined duo detection with GSTLAL: ", (found['NN_combined'] & ~found['pycbc'] & ~found['mbta'] & found['gstlal']& ~found['cwb-bbh']).sum())
+	print("NN_combined duo detection with CWB: ", (found['NN_combined'] & ~found['pycbc'] & ~found['mbta'] & ~found['gstlal']& found['cwb-bbh']).sum())
 
 	print("")
 
-	print("unique PyCBC events AFTER adding NN_combined: ", (found['pycbc_hyperbank'] & ~found['NN_combined'] & ~found['mbta'] & ~found['gstlal']).sum())
-	print("unique MBTA events AFTER adding NN_combined: ", (~found['pycbc_hyperbank'] & found['mbta'] & ~found['NN_combined'] & ~found['gstlal']).sum())
-	print("unique GSTLAL events AFTER adding NN_combined: ", (~found['pycbc_hyperbank'] & ~found['mbta'] & found['gstlal'] & ~found['NN_combined']).sum())
+	print("unique PyCBC events AFTER adding NN_combined: ", (found['pycbc'] & ~found['NN_combined'] & ~found['mbta'] & ~found['gstlal']& ~found['cwb-bbh']).sum())
+	print("unique MBTA events AFTER adding NN_combined: ", (~found['pycbc'] & found['mbta'] & ~found['NN_combined'] & ~found['gstlal']& ~found['cwb-bbh']).sum())
+	print("unique GSTLAL events AFTER adding NN_combined: ", (~found['pycbc'] & ~found['mbta'] & found['gstlal'] & ~found['NN_combined']& ~found['cwb-bbh']).sum())
+	print("unique CWB events AFTER adding NN_combined: ", (~found['pycbc'] & ~found['mbta'] & ~found['gstlal'] & ~found['NN_combined']& found['cwb-bbh']).sum())
 
+	print("Sum of all detections:", (found['pycbc'] | found['mbta'] | found['gstlal'] | found['cwb-bbh'] | found['NN_combined']).sum())
+
+	#now print the results in a latex-friendly format
+	#first the total number of detections for each pipeline
+	
+	f_pycbc = found['pycbc']
+	f_gstlal = found['gstlal']
+	f_mbta = found['mbta']
+	f_nn = found['NN_combined']
+	f_cwb = found['cwb-bbh']
+	if mdc_idx != 2:
+		print("\nTotal detections: me, pycbc, gstlal, mbta, - , total")
+		print("Unique detections: -, pycbc, gstlal, mbta, - , total")
+		print("Unique detections after adding NN: me, pycbc, gstlal, mbta, - , total")
+		#don't print cWB column for BNS and NSBH MDC files
+		print("{} & {} & {} & {} & - & {}\\\\".format(f_nn.sum(), f_pycbc.sum(), f_gstlal.sum(), f_mbta.sum(), (f_nn | f_pycbc | f_gstlal | f_mbta).sum()))
+		
+		#now print unique detections before and after NN
+
+		u_pycbc = (found['pycbc'] & ~found['gstlal'] & ~found['mbta'])
+		u_gstlal = (~found['pycbc'] & found['gstlal'] & ~found['mbta'])
+		u_mbta = (~found['pycbc'] & ~found['gstlal'] & found['mbta'])
+
+		print("- & {} & {} & {} & - & {}\\\\".format(u_pycbc.sum(), u_gstlal.sum(), u_mbta.sum(), ((u_pycbc | u_gstlal | u_mbta)).sum()))
+
+		#now unique detections after adding NN
+		u_pycbc_after = (found['pycbc'] & ~found['NN_combined'] & ~found['gstlal'] & ~found['mbta'])
+		u_gstlal_after = (~found['pycbc'] & found['gstlal'] & ~found['NN_combined'] & ~found['mbta'])
+		u_mbta_after = (~found['pycbc'] & ~found['gstlal'] & ~found['NN_combined'] & found['mbta'])
+		u_NN = (found['NN_combined'] & ~found['pycbc'] & ~found['gstlal'] & ~found['mbta'])
+
+		print("{} & {} & {} & {} & - & {}\\\\".format(u_NN.sum(), u_pycbc_after.sum(), u_gstlal_after.sum(), u_mbta_after.sum(), ((u_pycbc_after | u_gstlal_after | u_mbta_after | u_NN)).sum()))
+	else:
+		print("\nTotal detections: me, pycbc, gstlal, mbta, cwb, total")
+		print("Unique detections: -, pycbc, gstlal, mbta, cwb, total")
+		print("Unique detections after adding NN: me, pycbc, gstlal, mbta, cwb, total")
+		print("{} & {} & {} & {} & {} & {}\\\\".format(f_nn.sum(), f_pycbc.sum(), f_gstlal.sum(), f_mbta.sum(), f_cwb.sum(), (f_nn | f_pycbc | f_gstlal | f_mbta | f_cwb).sum()))
+		
+		#now print unique detections before and after NN
+
+		u_pycbc = (found['pycbc'] & ~found['gstlal'] & ~found['mbta'] & ~found['cwb-bbh'])
+		u_gstlal = (~found['pycbc'] & found['gstlal'] & ~found['mbta'] & ~found['cwb-bbh'])
+		u_mbta = (~found['pycbc'] & ~found['gstlal'] & found['mbta'] & ~found['cwb-bbh'])
+		u_cwb = (~found['pycbc'] & ~found['gstlal'] & ~found['mbta'] & found['cwb-bbh'])
+
+		print("- & {} & {} & {} & {} & {}\\\\".format(u_pycbc.sum(), u_gstlal.sum(), u_mbta.sum(), u_cwb.sum(), ((u_pycbc | u_gstlal | u_mbta | u_cwb)).sum()))
+
+		#now unique detections after adding NN
+		u_pycbc_after = (found['pycbc'] & ~found['NN_combined'] & ~found['gstlal'] & ~found['mbta']& ~found['cwb-bbh'])
+		u_gstlal_after = (~found['pycbc'] & found['gstlal'] & ~found['NN_combined'] & ~found['mbta']& ~found['cwb-bbh'])
+		u_mbta_after = (~found['pycbc'] & ~found['gstlal'] & ~found['NN_combined'] & found['mbta']& ~found['cwb-bbh'])
+		u_cwb_after = (~found['pycbc'] & ~found['gstlal'] & ~found['NN_combined'] & ~found['mbta']& found['cwb-bbh'])
+		u_NN = (found['NN_combined'] & ~found['pycbc'] & ~found['gstlal'] & ~found['mbta']& ~found['cwb-bbh'])
 
 #get filepaths somehow... 
+
+###############################################################################
+#-------------------------------MAIN CODE-------------------------------------#
+###############################################################################
+
 
 if __name__ == "__main__":
 
@@ -431,47 +529,155 @@ if __name__ == "__main__":
 	#this line does most of the work
 	all_stats = combined_model_results(fps)
 
-
+	plot_save_dir = os.path.join(submit_args['global']['run_dir'], "results")
 
 	upper_thresh = 1e-3
 	lower_thresh = 1e-7
-	OPA_threshold = 1/(3600*24*30*2)
+	#OPA_threshold = 1/(3600*24*30*2)
+	#check the file format from inj_params
+	if all_stats["combined"][0]['inj_params']['file_format'] == "O4":
+		print("O4 file format, using OPA threshold of 1/yr")
+		OPA_threshold = 1/(3600*24*365.25)
+	else:
+		print("Assuming O3 file format, using OPA threshold of 1/2 months")
+		OPA_threshold = 1/(3600*24*30*2)
 
-
+	master_inj_params = {}
 	#plot the sensitivities for each MDC file
 	for mdc_idx in range(len(mdc_file)):
 		#mdc_idx = 2
-		inj_params = all_stats['combined'][mdc_idx]['inj_params']
+		inj_params = copy.deepcopy(all_stats['combined'][mdc_idx]['inj_params'])
+
 		pipeline_fars = all_stats['combined'][mdc_idx]['pipeline_fars']
 		mdc = mdc_file[mdc_idx]
 
 		combined_pipeline_mdc_summary(all_stats, mdc_idx)
 
-		plot_sensitivities(inj_params, pipeline_fars, 'NN_combined', mdc, os.path.join(submit_args['global']['run_dir'], "results"), mdc_idx)
+		#plot_sensitivities(inj_params, pipeline_fars, 'NN_combined', mdc, os.path.join(submit_args['global']['run_dir'], "results"), mdc_idx)
+
+		for key in all_stats["combined"][mdc_idx]['pipeline_fars'].keys():
+			if "NN" not in key or key == 'NN_combined':
+				inj_params['pipeline_fars'][key] = all_stats["combined"][mdc_idx]['pipeline_fars'][key]
+			if "NN" in key and key != 'NN_combined':
+				del inj_params['pipeline_fars'][key]
+
+		inj_params['pipeline_fars']['any'] = np.min(np.array(list(inj_params['pipeline_fars'].values())), axis = 0)
+		inj_params['pipeline_fars']['any (no NN)'] = np.min(np.array([inj_params['pipeline_fars'][p] for p in inj_params['pipeline_fars'].keys() if "NN" not in p]), axis = 0)
+
+		if mdc_idx == 0:
+			master_inj_params = inj_params
+			print("number of injections in master inj params: ", len(master_inj_params['pipeline_fars']['pycbc']))
+		else:
+			for key in inj_params['pipeline_fars'].keys():
+				if key not in master_inj_params['pipeline_fars']:
+					raise ValueError(f"Pipeline {key} not found in master inj params")
+				#now we can append the fars from this mdc file to the master inj params
+				master_inj_params['pipeline_fars'][key] = np.concatenate((master_inj_params['pipeline_fars'][key], inj_params['pipeline_fars'][key]))
+				#print("number of injections in master inj params: ", len(master_inj_params['pipeline_fars']['pycbc']))
+			for key in inj_params.keys():
+				if key in ["file_format", "pipeline_fars", "pipelines", "N_draw"]:
+					continue
+				else:
+					#print(key)
+					#append
+					master_inj_params[key] = np.concatenate((master_inj_params[key], inj_params[key]))
+		print("After copying, all_stats contains the following pipelines:", all_stats['combined'][mdc_idx]['pipeline_fars'].keys())
+		print("Inj_params on the other hand contains the following pipelines:", inj_params['pipeline_fars'].keys())
+	#print("shape of master inj params keys: ", master_inj_params['m1'].shape)
+	#for key in master_inj_params.keys():
+	#	print(key, master_inj_params[key].shape)
+	fig, axes = V_summary_plot(master_inj_params)
+	
+	plt.savefig(os.path.join(plot_save_dir, "V_summary.png"), dpi = 300)
+	print("best models for each bin: ", all_stats['combined']['best_model'])
+
 
 
 	event_stats = {}
 	detection_sum = 0
 	total_events = 0
+	detections_by_obsrun = {}
+	events_by_obsrun = {}
 
 	for bin in range(len(fps)):
 
 		submit_args = json.load(open(fps[bin]))
 		inj_args = json.load(open(submit_args['injection_args']))
+		real_args = json.load(open(submit_args['real_event_args']))
+		real_dir_root = real_args['save_dir']
 
+		if 'trigger_selection' in inj_args:
+			trigger_selection = inj_args['trigger_selection']
+			try:
+				trigger_selection = eval(trigger_selection)
+				print("Using trigger selection function: ", trigger_selection)
+			except:
+				print("Failed to evaluate trigger selection, defaulting to median")
+				trigger_selection = np.median
+		else:
+			trigger_selection = np.median
 
 		model_idx = all_stats['combined']['best_model'][bin]
 		bg = all_stats[bin]['bg_sort'][model_idx - 8]
 		print("Processing bin ", bin, " with model NN", model_idx)
 
-		real_idx = inj_args['duration']//2 - 100
-		real_dir_root = os.path.join(inj_args['jobdir'], "real_events", inj_args['bin'])
+		#real_idx = inj_args['duration']//2 - 100
+		#real_dir_root = os.path.join(inj_args['jobdir'], "real_events", inj_args['bin'])
 		real_dirs = sorted(os.listdir(real_dir_root))
 
 		for d in real_dirs:
 			if d.startswith("GW"):
 				print("Processing event", d)
 				real_dir = os.path.join(real_dir_root, d)
+				if int(d[2:4]) < 17:
+					if "O1" not in detections_by_obsrun:
+						detections_by_obsrun["O1"] = 0
+						events_by_obsrun["O1"] = 0
+					if bin == 0:
+						events_by_obsrun["O1"] += 1
+					run = "O1"
+				elif int(d[2:4]) < 19:
+					if "O2" not in detections_by_obsrun:
+						detections_by_obsrun["O2"] = 0
+						events_by_obsrun["O2"] = 0
+					if bin == 0:
+						events_by_obsrun["O2"] += 1
+					run = "O2"
+				elif int(d[2:6]) < 1911:
+					#1911 because O3a ended in October, 2019 and O3b started in November, 2019
+					if "O3a" not in detections_by_obsrun:
+						detections_by_obsrun["O3a"] = 0
+						events_by_obsrun["O3a"] = 0
+					if bin == 0:
+						events_by_obsrun["O3a"] += 1
+					run = "O3a"
+				elif int(d[2:4]) < 21:
+					if "O3b" not in detections_by_obsrun:
+						detections_by_obsrun["O3b"] = 0
+						events_by_obsrun["O3b"] = 0
+					if bin == 0:
+						events_by_obsrun["O3b"] += 1
+					run = "O3b"
+				elif int(d[2:6]) < 2402:
+					#2402 because O4a ended in mid-January, 2024.
+					if "O4a" not in detections_by_obsrun:
+						detections_by_obsrun["O4a"] = 0
+						events_by_obsrun["O4a"] = 0
+					if bin == 0:
+						events_by_obsrun["O4a"] += 1
+					run = "O4a"
+				else:
+					print("Event {} has unknown observation run...".format(d))
+
+				real_idx = inj_args['duration']//2 - 100
+				offset = 0
+				#check if there is an offset file in the real_dir, if there is apply it
+				if os.path.exists(os.path.join(real_dir, "offset.txt")):
+					offset = int(np.loadtxt(os.path.join(real_dir, "offset.txt")))
+					#note that the offset is subtracted, because the offset is shifting the start GPS time of the data,
+					#which we need to 'undo' when getting the actual index of the event in the data. 
+					real_idx -= offset
+				print("Offset for event {} is {}".format(d, offset))
 
 				if d not in event_stats:
 					event_stats[d] = {}
@@ -484,7 +690,7 @@ if __name__ == "__main__":
 				
 				real_event = np.load(os.path.join(real_dir, "timeslides.npy"))[0]
 
-				_, real_func = apply_func_to_bg_inj(real_event, real_event, np.median, rs_index = model_idx)
+				_, real_func = apply_func_to_bg_inj(real_event, real_event, trigger_selection, rs_index = model_idx)
 				real_preds = preds_to_far_constrained(bg, real_func, upper = upper_thresh, lower = lower_thresh, verbose = False)
 
 				real_far = real_preds[real_idx]
@@ -514,10 +720,12 @@ if __name__ == "__main__":
 						if event_stats[d]['FAR'] == 1:
 							print("First detection for event {}".format(d))
 							detection_sum += 1
+							detections_by_obsrun[run] += 1
 						else:
 							print("Updating event {} FAR from {} to {}".format(d, event_stats[d]['FAR'], real_far))
+						trig = np.where(real_event[real_idx,:,model_idx] == trigger_selection(real_event[real_idx,:,model_idx]))[0][0]
 						event_stats[d]['FAR'] = real_far
-						event_stats[d]['SNR'] = real_event[real_idx, 0, 2]
+						event_stats[d]['SNR'] = real_event[real_idx, trig, 2]
 						event_stats[d]['model_bin'] = bin
 						event_stats[d]['model_idx'] = model_idx
 					# detection_fars[i-8].append(real_far)
@@ -526,6 +734,22 @@ if __name__ == "__main__":
 				real_idx = inj_args['duration']//2 - 100
 		print("Total detections so far: ", detection_sum, " out of ", total_events, "\n")
 
+
+	from infernus.postprocessing import round_two_figures
+	print("Number of detections for each model:")
+	print("NN_combined: ", detection_sum)
+
+	print("Total number of events:", total_events, "\n")
+
+	print("fraction of events detected by each model:")
+	print("NN_combined", round_two_figures(detection_sum / total_events) if total_events > 0 else 0)
+
+	print("\n\nBreakdown by observing run: (fraction in brackets)")
+	for run in detections_by_obsrun:
+		print("\n{}: ".format(run), events_by_obsrun[run], "events")
+		print("  NN_combined", detections_by_obsrun[run], " (", round_two_figures(detections_by_obsrun[run] / events_by_obsrun[run]) if events_by_obsrun[run] > 0 else 0, ")")
+		#print("  Fraction detected: ", sum(detections_by_obsrun[run]) / events_by_obsrun[run] if events_by_obsrun[run] > 0 else 0)
+	print()
 
 	#now print the detection summary
 	events = get_GWTC_events(m1_lower = 0, m2_lower = 0, m1_upper=1000, m2_upper=1000, exclude_marginal = False)
@@ -546,7 +770,7 @@ if __name__ == "__main__":
 		print("Model FAR (yr-1): ", round(event_stats[event]['FAR']*3600*24*365.25,6))
 		print("Model IFAR (yrs): ", round(1/(event_stats[event]['FAR']*3600*24*365.25),2))
 
-		if event_stats[event]['FAR'] > OPA_threshold/6:
+		if event_stats[event]['FAR'] > 1/(3600*24*365.25):
 			print("NOTE: this event is not detected at the 1/year level")
 		if event_stats[event]['FAR'] > OPA_threshold/3:
 			print("NOTE: this event is not detected when accounting for trials factor")
@@ -554,5 +778,12 @@ if __name__ == "__main__":
 
 
 	#finally, save the all_stats to a file for future reference
-	results_dir = os.path.join(inj_args['jobdir'], "results")
-	np.save(os.path.join(results_dir, "all_stats.npy"), all_stats)
+	#results_dir = os.path.join(inj_args['jobdir'], "results")
+	np.save(os.path.join(plot_save_dir, "all_stats.npy"), all_stats)
+
+	# Plots using all_stats go here
+	from infernus.postprocessing import plot_missed_vs_found
+	for i in range(len(mdc_file)):
+		params = all_stats['combined'][i]['inj_params']
+		fars = all_stats['combined'][i]['pipeline_fars']['NN_combined']
+		plot_missed_vs_found(params,fars, plot_save_dir, suffix = str(i))

@@ -265,10 +265,7 @@ if injfile == "real":
 timeslides = np.load(myfolder + "/timeslides_{}_0.npy".format(job_id))
 if streamline:
 	SNR = np.load(myfolder + "/SNR_array_{}_0.npy".format(job_id))
-	#we can also delete the SNR and timeslides files now
-	os.remove(myfolder + "/SNR_array_{}_0.npy".format(job_id))
-	os.remove(myfolder + "/timeslides_{}_0.npy".format(job_id))
-	print("deleted SNR and timeslides files")
+
 else:
 	SNR = np.load(myfolder + "/SNR_array_{}_0.npy".format(job_id), mmap_mode='r')
 
@@ -663,6 +660,10 @@ timeslides = timeslides.astype(np.float32)
 #save the SNR array to file
 #np.save(save_dir + "/SNR_array_{}.npy".format(job_id), SNR)
 
+#we can also delete the SNR and timeslides files now
+os.remove(myfolder + "/SNR_array_{}_0.npy".format(job_id))
+os.remove(myfolder + "/timeslides_{}_0.npy".format(job_id))
+print("deleted SNR and timeslides files")
 
 if injfile == "real":
 	#Also save the SNR array and the predictions
@@ -673,6 +674,14 @@ else:
 	np.save(save_dir + "/timeslides_{}.npy".format(job_id), timeslides)
 
 print("finished serving job!")
+#confirm that the timeslides file exists
+if os.path.exists(save_dir + "/timeslides_{}.npy".format(job_id)):
+	print("timeslides file saved successfully")
+else:
+	print("timeslides file not saved successfully")
+	#try to save again
+	np.save(save_dir + "/timeslides_{}.npy".format(job_id), timeslides)
+	
 if executor is not None:
 	executor.shutdown(wait=False, cancel_futures=True)
 	#kill all child processes

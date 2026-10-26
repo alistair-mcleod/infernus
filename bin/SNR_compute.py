@@ -31,6 +31,7 @@ from infernus.real_utils import get_real_events#, get_data_from_OzStar
 #from model_utils import onnx_callback
 start = time.time()
 from infernus.triggering.zerolags import get_zerolags
+from infernus.triggering.background import BackgroundTimeslideCache
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--jobindex', type=int,default=0)
@@ -86,6 +87,7 @@ def load_pycbc_templates_from_hdf(hdf_file):
 
 args = json.load(open(argsfile, "r"))
 noise_dir = args["noise_dir"]
+background_timeslide_optimisation = args.get("background_timeslide_optimisation", True)
 n_cpus = args["ntasks"]
 print("number of CPUs:", n_cpus)
 
@@ -489,7 +491,7 @@ def is_timeslide_valid(second,timeslide, chop_time = 0):
 #merge_time = 0
 
 
-def get_timeslide_new(i, SNR_rolled, template_ids):
+def get_timeslide_new(i, SNR_rolled, template_ids, background_cache=None):
 	global criterion_time, merge_time
 	#Get the ith timeslide. This processes all 900 seconds
 	#for each timeslide, roll the SNR array. get 'zerolags', then compare to existing array
@@ -504,17 +506,24 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 	#	SNR_rolled[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048*(i+1), axis = 1)
 	#if we're using an injfile, no time shift is necessary.
 
-	zerolags = get_zerolags(
-		data = SNR_rolled,
-		snr_thresh = 4,
-		offset = 20,
-		buffer_length = 2048,
-		overlap = int(0.2*2048),
-		num_trigs = 1,
-		chop_time = chop_idx,
-		both_detectors_above_thresh = both_detectors_above_thresh,
-		max_snr_ratio = max_snr_ratio
-	)
+	if background_cache is not None:
+		zerolags = background_cache.get_zerolags_optimised(
+			i + 1, snr_thresh=4,
+			both_detectors_above_thresh=both_detectors_above_thresh,
+			max_snr_ratio=max_snr_ratio,
+		)
+	else:
+		zerolags = get_zerolags(
+			data = SNR_rolled,
+			snr_thresh = 4,
+			offset = 20,
+			buffer_length = 2048,
+			overlap = int(0.2*2048),
+			num_trigs = 1,
+			chop_time = chop_idx,
+			both_detectors_above_thresh = both_detectors_above_thresh,
+			max_snr_ratio = max_snr_ratio
+		)
 
 	zerolags = np.array(zerolags)
 	#TODO: we're going to use the template IDs to save the SNRs, need to move this after it's already integrated into timeslides.
@@ -586,7 +595,10 @@ def get_timeslide_new(i, SNR_rolled, template_ids):
 			
 			if overwrite_criterion[j]:
 				
-				SNR_array[:,i,j,overwrite_targets[idx]] = SNR_rolled[:,tmplt[idx], start[idx]:end[idx]]
+				if background_cache is None:
+					SNR_array[:,i,j,overwrite_targets[idx]] = SNR_rolled[:,tmplt[idx], start[idx]:end[idx]]
+				else:
+					SNR_array[:,i,j,overwrite_targets[idx]] = background_cache.get_shifted_snr_window(tmplt[idx], start[idx], end[idx], i + 1)
 				idx += 1
 		with merge_time.get_lock():
 			merge_time.value += time.time() - st
@@ -970,12 +982,16 @@ def calc_batch(i):
 	else:
 		
 		#print("starting timeslides")
+		background_cache = None
+		if background_timeslide_optimisation:
+			background_cache = BackgroundTimeslideCache(nonwindowed_SNR, chop_time=chop_idx)
 		for j in range(num_time_slides):
 			#TODO: since we're passing nonwindowed SNR, we can roll it in-place and save memory.
 			#get_timeslide_new(j, nonwindowed_SNR, template_start_idx)
 			#roll SNR array to perform a time shift
-			nonwindowed_SNR[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048, axis = 1)
-			get_timeslide_new(j, nonwindowed_SNR, template_banks[i])
+			if background_cache is None:
+				nonwindowed_SNR[1,:,:] = np.roll(nonwindowed_SNR[1,:,:], 2048, axis = 1)
+			get_timeslide_new(j, nonwindowed_SNR, template_banks[i], background_cache=background_cache)
 		#with mp.Pool(4) as pool:
 		#	pool.map(get_timeslide_new, range(100))
 	with timeslide_time.get_lock():
